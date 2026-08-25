@@ -64,10 +64,10 @@ input double      InpFibCautionLevel    = 61.8;         // Fib Caution Zone (%)
 input double      InpFibInvalidation    = 78.6;         // Fib Invalidation Level (%)
 
 input group "=== Trend Detection Settings ==="
-input ENUM_TIMEFRAMES InpHTF_Period     = PERIOD_H4;    // Higher Timeframe (Trend Bias)
-input ENUM_TIMEFRAMES InpStructureTF    = PERIOD_H1;    // Structure Timeframe
+input ENUM_TIMEFRAMES InpHTF_Period     = PERIOD_H1;    // Higher Timeframe (Trend Bias - H1 for active intraday)
+input ENUM_TIMEFRAMES InpStructureTF    = PERIOD_M15;   // Structure Timeframe (M15 for fast setups)
 input ENUM_TIMEFRAMES InpEntryTF        = PERIOD_M15;   // Entry Timeframe
-input int         InpSwingLookback      = 15;           // Swing Point Lookback Bars
+input int         InpSwingLookback      = 10;           // Swing Point Lookback Bars
 input bool        InpUseMA              = true;         // Use Moving Averages for Trend
 input int         InpMA_Fast            = 20;           // Fast MA Period
 input int         InpMA_Mid             = 50;           // Mid MA Period
@@ -82,17 +82,17 @@ input int         InpTrailingATRPeriod  = 14;           // Trailing ATR Period
 input double      InpTrailingATRMult    = 1.5;          // Trailing ATR Multiplier
 
 input group "=== ICT Settings ==="
-input int         InpBOS_Lookback       = 10;           // BOS Lookback Bars
+input int         InpBOS_Lookback       = 8;            // BOS Lookback Bars
 input int         InpFVG_MinSize        = 3;            // FVG Minimum Size (points)
 
 input group "=== Visualization Settings ==="
 input bool        InpShowDashboard      = true;         // Show Dashboard Panel
 input bool        InpShowFibLines       = true;         // Show Fibonacci Lines
-input bool        InpShowSwings         = true;         // Show Swing Points
+input bool        InpShowSwings         = false;        // Show Swing High/Low Structure Dots (Off by default to avoid confusion with trades)
 input bool        InpShowBOS            = true;         // Show BOS/CHoCH Labels
 input bool        InpShowFVG            = true;         // Show FVG Zones
 input bool        InpShowSessions       = true;         // Show Session Boxes
-input bool        InpShowTradeArrows    = true;         // Show Trade Entry Arrows
+input bool        InpShowTradeArrows    = true;         // Show Trade Entry Arrows (Real Buy/Sell Signals)
 input color       InpFibColor382        = clrDodgerBlue; // Fib 38.2% Color
 input color       InpFibColor500        = clrGold;       // Fib 50.0% Color
 input color       InpFibColor618        = clrOrange;     // Fib 61.8% Color
@@ -154,9 +154,64 @@ struct SymbolData
    FibLevels         fib;
    int               trades_this_session;
    datetime          last_trade_time;
-   bool              breakeven_applied[];
-   bool              partial_closed[];
 };
+
+struct PositionState
+{
+   ulong ticket;
+   bool  be_done;
+   bool  tp1_done;
+};
+
+PositionState  g_pos_states[];
+
+bool IsBEApplied(ulong ticket)
+{
+   for(int i = 0; i < ArraySize(g_pos_states); i++)
+      if(g_pos_states[i].ticket == ticket) return g_pos_states[i].be_done;
+   return false;
+}
+
+void SetBEApplied(ulong ticket)
+{
+   for(int i = 0; i < ArraySize(g_pos_states); i++)
+   {
+      if(g_pos_states[i].ticket == ticket)
+      {
+         g_pos_states[i].be_done = true;
+         return;
+      }
+   }
+   int size = ArraySize(g_pos_states);
+   ArrayResize(g_pos_states, size + 1);
+   g_pos_states[size].ticket = ticket;
+   g_pos_states[size].be_done = true;
+   g_pos_states[size].tp1_done = false;
+}
+
+bool IsTP1Done(ulong ticket)
+{
+   for(int i = 0; i < ArraySize(g_pos_states); i++)
+      if(g_pos_states[i].ticket == ticket) return g_pos_states[i].tp1_done;
+   return false;
+}
+
+void SetTP1Done(ulong ticket)
+{
+   for(int i = 0; i < ArraySize(g_pos_states); i++)
+   {
+      if(g_pos_states[i].ticket == ticket)
+      {
+         g_pos_states[i].tp1_done = true;
+         return;
+      }
+   }
+   int size = ArraySize(g_pos_states);
+   ArrayResize(g_pos_states, size + 1);
+   g_pos_states[size].ticket = ticket;
+   g_pos_states[size].be_done = false;
+   g_pos_states[size].tp1_done = true;
+}
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                 |
@@ -262,9 +317,6 @@ int OnInit()
       g_symbols[i].trades_this_session = 0;
       g_symbols[i].last_trade_time = 0;
       g_last_bar_time[i] = 0;
-      
-      ArrayResize(g_symbols[i].breakeven_applied, 0);
-      ArrayResize(g_symbols[i].partial_closed, 0);
       
       PrintFormat("OK: Symbol %s initialized successfully.", sym);
    }
@@ -576,7 +628,7 @@ int DetectSwingPoints(string sym, ENUM_TIMEFRAMES tf, int lookback, SwingPoint &
    
    int count = 0;
    ArrayResize(swings, 0);
-   int swing_strength = 3; // bars on each side to confirm swing
+   int swing_strength = 2; // 2 bars on each side for fast, responsive intraday swings
    
    for(int i = swing_strength; i < bars_needed - swing_strength; i++)
    {
@@ -1196,6 +1248,7 @@ void ManageOpenTrades(int sym_index)
 {
    string sym = g_symbols[sym_index].symbol;
    int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
    
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -1215,62 +1268,66 @@ void ManageOpenTrades(int sym_index)
       if(risk_distance == 0) continue;
       
       // ---- BREAKEVEN AT 1:1 RR ----
-      double be_target = risk_distance * InpBreakevenRR;
-      bool should_be = false;
-      
-      if(pos_type == POSITION_TYPE_BUY)
+      if(!IsBEApplied(ticket))
       {
-         should_be = (current_price >= open_price + be_target) && (current_sl < open_price);
-      }
-      else
-      {
-         should_be = (current_price <= open_price - be_target) && (current_sl > open_price);
-      }
-      
-      if(should_be)
-      {
-         double new_sl = NormalizeDouble(open_price + (pos_type == POSITION_TYPE_BUY ? 1 : -1) * SymbolInfoDouble(sym, SYMBOL_POINT) * 5, digits);
+         double be_target = risk_distance * InpBreakevenRR;
+         bool should_be = false;
          
-         if(trade.PositionModify(ticket, new_sl, current_tp))
+         if(pos_type == POSITION_TYPE_BUY)
+            should_be = (current_price >= open_price + be_target) && (current_sl < open_price);
+         else
+            should_be = (current_price <= open_price - be_target) && (current_sl > open_price);
+         
+         if(should_be)
          {
-            PrintFormat("BREAKEVEN: %s Ticket %d | SL moved to %.*f", sym, ticket, digits, new_sl);
-            current_sl = new_sl;
-         }
-      }
-      
-      // ---- PARTIAL CLOSE AT TP1 (50%) ----
-      double partial_target = risk_distance * InpMinRR; // TP1 at minimum RR
-      bool should_partial = false;
-      
-      if(pos_type == POSITION_TYPE_BUY)
-         should_partial = (current_price >= open_price + partial_target);
-      else
-         should_partial = (current_price <= open_price - partial_target);
-      
-      if(should_partial && volume > SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN))
-      {
-         double close_volume = NormalizeDouble(volume * (InpPartialClosePercent / 100.0), 2);
-         double min_vol = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
-         double lot_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
-         
-         close_volume = MathMax(min_vol, close_volume);
-         close_volume = NormalizeDouble(MathFloor(close_volume / lot_step) * lot_step, 2);
-         
-         // Only partial close if remaining would be >= min lot
-         if((volume - close_volume) >= min_vol)
-         {
-            if(trade.PositionClosePartial(ticket, close_volume))
+            // Move SL to Entry + 10 points profit buffer
+            double new_sl = NormalizeDouble(open_price + (pos_type == POSITION_TYPE_BUY ? 1 : -1) * point * 10, digits);
+            
+            if(trade.PositionModify(ticket, new_sl, current_tp))
             {
-               PrintFormat("PARTIAL CLOSE: %s Ticket %d | Closed %.2f lots (%.0f%%)", 
-                  sym, ticket, close_volume, InpPartialClosePercent);
+               SetBEApplied(ticket);
+               PrintFormat("BREAKEVEN LOCKED: %s Ticket %d | SL moved to %.*f (+10 pts)", sym, ticket, digits, new_sl);
+               current_sl = new_sl;
             }
          }
       }
       
-      // ---- TRAILING STOP ----
-      if(InpUseTrailingStop && current_sl >= open_price - SymbolInfoDouble(sym, SYMBOL_POINT))
+      // ---- PARTIAL CLOSE AT TP1 (50%) ONCE ----
+      if(!IsTP1Done(ticket))
       {
-         // Only trail after breakeven
+         double partial_target = risk_distance * InpMinRR; // TP1 at minimum RR
+         bool should_partial = false;
+         
+         if(pos_type == POSITION_TYPE_BUY)
+            should_partial = (current_price >= open_price + partial_target);
+         else
+            should_partial = (current_price <= open_price - partial_target);
+         
+         if(should_partial && volume > SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN))
+         {
+            double close_volume = NormalizeDouble(volume * (InpPartialClosePercent / 100.0), 2);
+            double min_vol = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+            double lot_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+            
+            close_volume = MathMax(min_vol, close_volume);
+            close_volume = NormalizeDouble(MathFloor(close_volume / lot_step) * lot_step, 2);
+            
+            // Only partial close if remaining would be >= min lot
+            if((volume - close_volume) >= min_vol)
+            {
+               if(trade.PositionClosePartial(ticket, close_volume))
+               {
+                  SetTP1Done(ticket);
+                  PrintFormat("TP1 HIT & PARTIAL CLOSED: %s Ticket %d | Closed %.2f lots (%.0f%%) at Profit!", 
+                     sym, ticket, close_volume, InpPartialClosePercent);
+               }
+            }
+         }
+      }
+      
+      // ---- TRAILING STOP AFTER BREAKEVEN / TP1 ----
+      if(InpUseTrailingStop && (IsBEApplied(ticket) || IsTP1Done(ticket)))
+      {
          double atr[];
          ArraySetAsSeries(atr, true);
          if(CopyBuffer(g_symbols[sym_index].atr_handle, 0, 0, 2, atr) >= 2)
@@ -1281,19 +1338,19 @@ void ManageOpenTrades(int sym_index)
             if(pos_type == POSITION_TYPE_BUY)
             {
                new_trail_sl = NormalizeDouble(current_price - trail_distance, digits);
-               if(new_trail_sl > current_sl && new_trail_sl > open_price)
+               if(new_trail_sl > (current_sl + 10 * point) && new_trail_sl > open_price)
                {
                   trade.PositionModify(ticket, new_trail_sl, current_tp);
-                  PrintFormat("TRAIL: %s Ticket %d | SL trailed to %.*f", sym, ticket, digits, new_trail_sl);
+                  PrintFormat("PROFIT TRAIL: %s Ticket %d | SL trailed to %.*f", sym, ticket, digits, new_trail_sl);
                }
             }
             else
             {
                new_trail_sl = NormalizeDouble(current_price + trail_distance, digits);
-               if(new_trail_sl < current_sl && new_trail_sl < open_price)
+               if(new_trail_sl < (current_sl - 10 * point) && new_trail_sl < open_price)
                {
                   trade.PositionModify(ticket, new_trail_sl, current_tp);
-                  PrintFormat("TRAIL: %s Ticket %d | SL trailed to %.*f", sym, ticket, digits, new_trail_sl);
+                  PrintFormat("PROFIT TRAIL: %s Ticket %d | SL trailed to %.*f", sym, ticket, digits, new_trail_sl);
                }
             }
          }
@@ -1744,7 +1801,7 @@ void CreatePriceLabel(string name, datetime time, double price, string text, col
 }
 
 //+------------------------------------------------------------------+
-//| DRAW SWING POINTS                                                |
+//| DRAW SWING POINTS (Structure Dots - Not trade signals)           |
 //+------------------------------------------------------------------+
 void DrawSwingPoints(int sym_index)
 {
@@ -1753,7 +1810,7 @@ void DrawSwingPoints(int sym_index)
    // Only draw on the chart's symbol
    if(sym != Symbol()) return;
    
-   // Remove old swing arrows
+   // Remove old swing markers
    int obj_total = ObjectsTotal(0, 0);
    for(int k = obj_total - 1; k >= 0; k--)
    {
@@ -1765,33 +1822,33 @@ void DrawSwingPoints(int sym_index)
    SwingPoint swings[];
    int count = DetectSwingPoints(sym, InpStructureTF, InpSwingLookback, swings);
    
-   int max_display = MathMin(count, 15); // Limit display count
+   int max_display = MathMin(count, 12); // Limit display count
    
    for(int i = 0; i < max_display; i++)
    {
-      string arrow_name = g_obj_prefix + StringFormat("swing_%d", i);
+      string dot_name = g_obj_prefix + StringFormat("swing_%d", i);
       
       if(swings[i].is_high)
       {
-         // Swing High — down arrow above the high
-         ObjectCreate(0, arrow_name, OBJ_ARROW, 0, swings[i].time, swings[i].price);
-         ObjectSetInteger(0, arrow_name, OBJPROP_ARROWCODE, 218); // ▼ down triangle
-         ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, InpBearColor);
-         ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 2);
-         ObjectSetInteger(0, arrow_name, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
+         // Swing High — subtle small diamond dot labeled SH
+         ObjectCreate(0, dot_name, OBJ_ARROW, 0, swings[i].time, swings[i].price);
+         ObjectSetInteger(0, dot_name, OBJPROP_ARROWCODE, 159); // Small circle dot
+         ObjectSetInteger(0, dot_name, OBJPROP_COLOR, clrSilver);
+         ObjectSetInteger(0, dot_name, OBJPROP_WIDTH, 1);
+         ObjectSetInteger(0, dot_name, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
       }
       else
       {
-         // Swing Low — up arrow below the low
-         ObjectCreate(0, arrow_name, OBJ_ARROW, 0, swings[i].time, swings[i].price);
-         ObjectSetInteger(0, arrow_name, OBJPROP_ARROWCODE, 217); // ▲ up triangle
-         ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, InpBullColor);
-         ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 2);
-         ObjectSetInteger(0, arrow_name, OBJPROP_ANCHOR, ANCHOR_TOP);
+         // Swing Low — subtle small diamond dot labeled SL
+         ObjectCreate(0, dot_name, OBJ_ARROW, 0, swings[i].time, swings[i].price);
+         ObjectSetInteger(0, dot_name, OBJPROP_ARROWCODE, 159); // Small circle dot
+         ObjectSetInteger(0, dot_name, OBJPROP_COLOR, clrSilver);
+         ObjectSetInteger(0, dot_name, OBJPROP_WIDTH, 1);
+         ObjectSetInteger(0, dot_name, OBJPROP_ANCHOR, ANCHOR_TOP);
       }
       
-      ObjectSetInteger(0, arrow_name, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, arrow_name, OBJPROP_HIDDEN, false);
+      ObjectSetInteger(0, dot_name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, dot_name, OBJPROP_HIDDEN, false);
    }
 }
 
