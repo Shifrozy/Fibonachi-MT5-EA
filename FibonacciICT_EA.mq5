@@ -51,14 +51,15 @@ input string      InpSymbol2            = "XAUUSDm";    // Symbol 2 (London)
 input string      InpSymbol3            = "AUDJPYm";    // Symbol 3 (Asian)
 
 input group "=== Session Settings (GMT Hours) ==="
-input int         InpLondonStartHour    = 8;            // London Session Start (GMT)
-input int         InpLondonEndHour      = 12;           // London Session End (GMT)
+input bool        InpUseSessionFilter   = true;         // Enable Session Filter
+input int         InpLondonStartHour    = 7;            // London Session Start (GMT)
+input int         InpLondonEndHour      = 17;           // London Session End (GMT - covers London + NY overlap)
 input int         InpAsianStartHour     = 23;           // Asian Session Start (GMT)
-input int         InpAsianEndHour       = 8;            // Asian Session End (GMT)
+input int         InpAsianEndHour       = 9;            // Asian Session End (GMT)
 
 input group "=== Fibonacci Settings ==="
-input double      InpFibEntryHigh       = 50.0;         // Fib Entry Zone Upper (%)
-input double      InpFibEntryLow        = 38.2;         // Fib Entry Zone Lower (%)
+input double      InpFibEntryHigh       = 61.8;         // Fib Entry Zone Deep Pullback (%)
+input double      InpFibEntryLow        = 38.2;         // Fib Entry Zone Start (%)
 input double      InpFibCautionLevel    = 61.8;         // Fib Caution Zone (%)
 input double      InpFibInvalidation    = 78.6;         // Fib Invalidation Level (%)
 
@@ -66,14 +67,14 @@ input group "=== Trend Detection Settings ==="
 input ENUM_TIMEFRAMES InpHTF_Period     = PERIOD_H4;    // Higher Timeframe (Trend Bias)
 input ENUM_TIMEFRAMES InpStructureTF    = PERIOD_H1;    // Structure Timeframe
 input ENUM_TIMEFRAMES InpEntryTF        = PERIOD_M15;   // Entry Timeframe
-input int         InpSwingLookback      = 20;           // Swing Point Lookback Bars
+input int         InpSwingLookback      = 15;           // Swing Point Lookback Bars
 input bool        InpUseMA              = true;         // Use Moving Averages for Trend
 input int         InpMA_Fast            = 20;           // Fast MA Period
 input int         InpMA_Mid             = 50;           // Mid MA Period
 input int         InpMA_Slow            = 200;          // Slow MA Period
 
 input group "=== Trade Management ==="
-input double      InpMinRR              = 2.0;          // Minimum Risk:Reward Ratio
+input double      InpMinRR              = 1.5;          // Minimum Risk:Reward Ratio
 input double      InpBreakevenRR        = 1.0;          // Move SL to BE at RR
 input double      InpPartialClosePercent= 50.0;         // Partial Close Percent at TP1
 input bool        InpUseTrailingStop    = true;         // Use Trailing Stop
@@ -82,7 +83,7 @@ input double      InpTrailingATRMult    = 1.5;          // Trailing ATR Multipli
 
 input group "=== ICT Settings ==="
 input int         InpBOS_Lookback       = 10;           // BOS Lookback Bars
-input int         InpFVG_MinSize        = 5;            // FVG Minimum Size (points)
+input int         InpFVG_MinSize        = 3;            // FVG Minimum Size (points)
 
 input group "=== Visualization Settings ==="
 input bool        InpShowDashboard      = true;         // Show Dashboard Panel
@@ -415,13 +416,18 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool IsInSession(int session_type)
 {
+   if(!InpUseSessionFilter) return true; // Session filter disabled
+   
    MqlDateTime dt;
    TimeGMT(dt);
    int hour = dt.hour;
    
-   if(session_type == 0) // London
+   if(session_type == 0) // London / European / NY Overlap
    {
-      return (hour >= InpLondonStartHour && hour < InpLondonEndHour);
+      if(InpLondonStartHour <= InpLondonEndHour)
+         return (hour >= InpLondonStartHour && hour < InpLondonEndHour);
+      else
+         return (hour >= InpLondonStartHour || hour < InpLondonEndHour);
    }
    else // Asian
    {
@@ -455,28 +461,33 @@ ENUM_TREND_BIAS GetHTFTrendBias(int sym_index)
 {
    string sym = g_symbols[sym_index].symbol;
    
-   // Get swing points on HTF
-   SwingPoint swings[];
-   int swing_count = DetectSwingPoints(sym, InpHTF_Period, InpSwingLookback, swings);
+   // 1. Try 1H Structure first for responsive intraday trend
+   SwingPoint swings_1h[];
+   int count_1h = DetectSwingPoints(sym, InpStructureTF, InpSwingLookback, swings_1h);
+   ENUM_TREND_BIAS structure_bias = (count_1h >= 2) ? AnalyzeMarketStructure(swings_1h, count_1h) : TREND_NEUTRAL;
    
-   if(swing_count < 4) return TREND_NEUTRAL;
-   
-   // Analyze structure: HH/HL = Bullish, LH/LL = Bearish
-   ENUM_TREND_BIAS structure_bias = AnalyzeMarketStructure(swings, swing_count);
-   
-   // MA confirmation (optional)
-   if(InpUseMA)
+   // 2. If 1H is neutral, check 4H Structure
+   if(structure_bias == TREND_NEUTRAL)
    {
-      ENUM_TREND_BIAS ma_bias = GetMABias(sym_index);
-      
-      // Both must agree
-      if(structure_bias == TREND_BULLISH && ma_bias == TREND_BULLISH)
-         return TREND_BULLISH;
-      else if(structure_bias == TREND_BEARISH && ma_bias == TREND_BEARISH)
-         return TREND_BEARISH;
-      else
-         return TREND_NEUTRAL;
+      SwingPoint swings_4h[];
+      int count_4h = DetectSwingPoints(sym, InpHTF_Period, InpSwingLookback, swings_4h);
+      if(count_4h >= 2)
+         structure_bias = AnalyzeMarketStructure(swings_4h, count_4h);
    }
+   
+   // 3. Check Moving Averages
+   ENUM_TREND_BIAS ma_bias = GetMABias(sym_index);
+   
+   // If structure is clear, use it (MA confirms or provides fallback)
+   if(structure_bias != TREND_NEUTRAL)
+   {
+      if(!InpUseMA || ma_bias == TREND_NEUTRAL || ma_bias == structure_bias)
+         return structure_bias;
+   }
+   
+   // If structure is neutral or unavailable, use MA trend
+   if(ma_bias != TREND_NEUTRAL)
+      return ma_bias;
    
    return structure_bias;
 }
@@ -494,14 +505,12 @@ ENUM_TREND_BIAS GetMABias(int sym_index)
    
    double price = SymbolInfoDouble(g_symbols[sym_index].symbol, SYMBOL_BID);
    
-   // Bullish: Price > all MAs, Fast > Mid > Slow
-   if(price > ma_fast[0] && price > ma_mid[0] && price > ma_slow[0] &&
-      ma_fast[0] > ma_mid[0] && ma_mid[0] > ma_slow[0])
+   // Bullish: Price > 50 EMA AND (20 EMA > 50 EMA OR Price > 200 SMA)
+   if(price > ma_mid[0] && (ma_fast[0] > ma_mid[0] || price > ma_slow[0]))
       return TREND_BULLISH;
    
-   // Bearish: Price < all MAs, Fast < Mid < Slow
-   if(price < ma_fast[0] && price < ma_mid[0] && price < ma_slow[0] &&
-      ma_fast[0] < ma_mid[0] && ma_mid[0] < ma_slow[0])
+   // Bearish: Price < 50 EMA AND (20 EMA < 50 EMA OR Price < 200 SMA)
+   if(price < ma_mid[0] && (ma_fast[0] < ma_mid[0] || price < ma_slow[0]))
       return TREND_BEARISH;
    
    return TREND_NEUTRAL;
@@ -697,24 +706,14 @@ bool IsPriceInFibZone(double price, FibLevels &fib, ENUM_TREND_BIAS bias)
 {
    if(!fib.is_valid) return false;
    
-   if(bias == TREND_BULLISH)
-   {
-      // For longs: price should be between 38.2% and 50% (pullback zone)
-      // level_382 > level_500 for bullish (both below swing high)
-      double upper = fib.level_382;
-      double lower = fib.level_500;
-      return (price <= upper && price >= lower);
-   }
-   else if(bias == TREND_BEARISH)
-   {
-      // For shorts: price should be between 38.2% and 50% (pullback zone)
-      // level_382 < level_500 for bearish (both above swing low)
-      double lower = fib.level_382;
-      double upper = fib.level_500;
-      return (price >= lower && price <= upper);
-   }
+   // Pullback entry zone: between 38.2% and 61.8% (or up to 78.6% before invalidation)
+   double top_level    = MathMax(fib.level_382, fib.level_618);
+   double bottom_level = MathMin(fib.level_382, fib.level_618);
    
-   return false;
+   // Allow small buffer of 5 points
+   double point = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   
+   return (price >= (bottom_level - 10 * point) && price <= (top_level + 10 * point));
 }
 
 bool IsFibInvalidated(double price, FibLevels &fib)
@@ -935,34 +934,60 @@ bool HasICTConfirmation(int sym_index)
    string sym = g_symbols[sym_index].symbol;
    ENUM_TREND_BIAS bias = g_symbols[sym_index].htf_bias;
    
-   // Check for BOS on entry timeframe
-   bool has_bos = DetectBOS(sym, InpEntryTF, bias);
+   double high[], low[], close[], open_arr[];
+   datetime time[];
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(open_arr, true);
+   ArraySetAsSeries(time, true);
    
-   // Check for FVG
+   if(CopyHigh(sym, InpEntryTF, 0, 5, high) < 5) return false;
+   if(CopyLow(sym, InpEntryTF, 0, 5, low) < 5) return false;
+   if(CopyClose(sym, InpEntryTF, 0, 5, close) < 5) return false;
+   if(CopyOpen(sym, InpEntryTF, 0, 5, open_arr) < 5) return false;
+   if(CopyTime(sym, InpEntryTF, 0, 5, time) < 5) return false;
+   
+   // 1. Micro-BOS on 15M: Price broke out of the pullback in trend direction
+   if(bias == TREND_BULLISH)
+   {
+      // Previous candle closed above the high of the candle before it (momentum resumption)
+      if(close[1] > high[2] && close[1] > open_arr[1])
+      {
+         DrawBOSLabel(sym, time[1], high[2], true);
+         return true;
+      }
+      // Liquidity sweep: swept lower low on bar 2 and rejected back up strongly on bar 1
+      if(low[2] < low[3] && close[1] > open_arr[2])
+      {
+         DrawBOSLabel(sym, time[1], low[2], true);
+         return true;
+      }
+   }
+   else if(bias == TREND_BEARISH)
+   {
+      // Previous candle closed below the low of the candle before it
+      if(close[1] < low[2] && close[1] < open_arr[1])
+      {
+         DrawBOSLabel(sym, time[1], low[2], false);
+         return true;
+      }
+      // Liquidity sweep: swept higher high on bar 2 and rejected back down strongly on bar 1
+      if(high[2] > high[3] && close[1] < open_arr[2])
+      {
+         DrawBOSLabel(sym, time[1], high[2], false);
+         return true;
+      }
+   }
+   
+   // 2. FVG Detection
    double fvg_high = 0, fvg_low = 0;
-   bool has_fvg = DetectFVG(sym, InpEntryTF, bias, fvg_high, fvg_low);
-   
-   // Check for CHoCH (for trend change scenarios)
-   bool has_choch = DetectCHoCH(sym, InpEntryTF, bias);
-   
-   // Need at least BOS or (CHoCH + FVG) for confirmation
-   if(has_bos)
-   {
-      PrintFormat("[%s] ICT Confirmation: BOS detected on %s", sym, EnumToString(InpEntryTF));
+   if(DetectFVG(sym, InpEntryTF, bias, fvg_high, fvg_low))
       return true;
-   }
    
-   if(has_choch && has_fvg)
-   {
-      PrintFormat("[%s] ICT Confirmation: CHoCH + FVG detected on %s", sym, EnumToString(InpEntryTF));
+   // 3. CHoCH Confirmation
+   if(DetectCHoCH(sym, InpEntryTF, bias))
       return true;
-   }
-   
-   if(has_fvg)
-   {
-      PrintFormat("[%s] ICT Confirmation: FVG detected on %s (partial)", sym, EnumToString(InpEntryTF));
-      return true;
-   }
    
    return false;
 }
@@ -986,11 +1011,9 @@ bool HasCandlestickConfirmation(int sym_index)
    if(CopyLow(sym, InpEntryTF, 0, 5, low) < 5) return false;
    if(CopyClose(sym, InpEntryTF, 0, 5, close) < 5) return false;
    
-   // Check the last completed candle (index 1)
-   int idx = 1;
+   int idx = 1; // Completed candle
    double body = MathAbs(close[idx] - open_arr[idx]);
    double total_range = high[idx] - low[idx];
-   
    if(total_range == 0) return false;
    
    double upper_wick = high[idx] - MathMax(close[idx], open_arr[idx]);
@@ -998,36 +1021,29 @@ bool HasCandlestickConfirmation(int sym_index)
    
    if(bias == TREND_BULLISH)
    {
-      // Bullish rejection: Pin bar / Hammer
-      // Long lower wick, small body, close near high
-      bool is_hammer = (lower_wick >= body * 2.0) && (close[idx] > open_arr[idx]);
+      // 1. Hammer / Lower Wick Rejection
+      bool is_hammer = (lower_wick >= body * 1.0) && (close[idx] > open_arr[idx] || close[idx] > (low[idx] + total_range * 0.5));
       
-      // Strong bullish candle
-      bool is_strong_bull = (close[idx] > open_arr[idx]) && (body > total_range * 0.6);
+      // 2. Strong Bullish Candle
+      bool is_strong_bull = (close[idx] > open_arr[idx]) && (body >= total_range * 0.45);
       
-      // Check previous candle (index 2) for engulfing
-      bool is_engulfing = (close[idx] > open_arr[idx]) &&
-                          (close[2] < open_arr[2]) &&
-                          (close[idx] > high[2]) &&
-                          (open_arr[idx] < low[2]);
+      // 3. Bullish Reversal / Engulfing
+      bool is_bull_reversal = (close[idx] > open_arr[idx]) && (close[idx] > close[2]);
       
-      return (is_hammer || is_strong_bull || is_engulfing);
+      return (is_hammer || is_strong_bull || is_bull_reversal);
    }
    else if(bias == TREND_BEARISH)
    {
-      // Bearish rejection: Shooting star
-      bool is_shooting_star = (upper_wick >= body * 2.0) && (close[idx] < open_arr[idx]);
+      // 1. Shooting Star / Upper Wick Rejection
+      bool is_shooting_star = (upper_wick >= body * 1.0) && (close[idx] < open_arr[idx] || close[idx] < (high[idx] - total_range * 0.5));
       
-      // Strong bearish candle
-      bool is_strong_bear = (close[idx] < open_arr[idx]) && (body > total_range * 0.6);
+      // 2. Strong Bearish Candle
+      bool is_strong_bear = (close[idx] < open_arr[idx]) && (body >= total_range * 0.45);
       
-      // Bearish engulfing with previous candle
-      bool is_engulfing = (close[idx] < open_arr[idx]) &&
-                          (close[2] > open_arr[2]) &&
-                          (close[idx] < low[2]) &&
-                          (open_arr[idx] > high[2]);
+      // 3. Bearish Reversal / Engulfing
+      bool is_bear_reversal = (close[idx] < open_arr[idx]) && (close[idx] < close[2]);
       
-      return (is_shooting_star || is_strong_bear || is_engulfing);
+      return (is_shooting_star || is_strong_bear || is_bear_reversal);
    }
    
    return false;
@@ -1048,39 +1064,27 @@ bool BuildTradeSetup(int sym_index, TradeSetup &setup)
    
    setup.symbol = sym;
    
-   // Get 1H structure target (previous swing H/L for TP)
-   SwingPoint target_swings[];
-   int target_count = DetectSwingPoints(sym, InpStructureTF, InpSwingLookback, target_swings);
-   
    if(bias == TREND_BULLISH)
    {
       setup.direction = 1;
       setup.entry_price = ask;
       
-      // SL: Below the 61.8% fib level or recent swing low (whichever is closer)
-      double sl_fib = fib.level_618 - 10 * point;
-      setup.stop_loss = sl_fib;
+      // SL: Below the 78.6% fib level or swing low
+      double sl_price = MathMin(fib.level_786, fib.swing_low) - 15 * point;
+      setup.stop_loss = sl_price;
       
-      // TP: Target 1H market structure (previous swing high)
-      setup.take_profit = fib.swing_high; // Default to swing high
+      double risk = ask - setup.stop_loss;
+      if(risk <= 0) return false;
       
-      // Look for a higher 1H swing high as target
-      for(int i = 0; i < target_count; i++)
+      // TP: Target 1H market structure (Swing High) OR Minimum RR extension
+      double tp_target = fib.swing_high;
+      if((tp_target - ask) < (risk * InpMinRR))
       {
-         if(target_swings[i].is_high && target_swings[i].price > ask)
-         {
-            setup.take_profit = target_swings[i].price;
-            break;
-         }
+         // If swing high is too close, use minimum RR target (or 127.2% extension)
+         tp_target = ask + (risk * InpMinRR);
       }
       
-      // Validate minimum RR
-      double risk = ask - setup.stop_loss;
-      double reward = setup.take_profit - ask;
-      
-      if(risk <= 0 || reward <= 0) return false;
-      if(reward / risk < InpMinRR) return false;
-      
+      setup.take_profit = tp_target;
       setup.comment = StringFormat("FibICT Buy [%.1f-%.1f%%]", InpFibEntryLow, InpFibEntryHigh);
    }
    else if(bias == TREND_BEARISH)
@@ -1088,29 +1092,21 @@ bool BuildTradeSetup(int sym_index, TradeSetup &setup)
       setup.direction = -1;
       setup.entry_price = bid;
       
-      // SL: Above the 61.8% fib level
-      double sl_fib = fib.level_618 + 10 * point;
-      setup.stop_loss = sl_fib;
+      // SL: Above the 78.6% fib level or swing high
+      double sl_price = MathMax(fib.level_786, fib.swing_high) + 15 * point;
+      setup.stop_loss = sl_price;
       
-      // TP: Target 1H market structure (previous swing low)
-      setup.take_profit = fib.swing_low; // Default to swing low
+      double risk = setup.stop_loss - bid;
+      if(risk <= 0) return false;
       
-      for(int i = 0; i < target_count; i++)
+      // TP: Target 1H market structure (Swing Low) OR Minimum RR extension
+      double tp_target = fib.swing_low;
+      if((bid - tp_target) < (risk * InpMinRR))
       {
-         if(!target_swings[i].is_high && target_swings[i].price < bid)
-         {
-            setup.take_profit = target_swings[i].price;
-            break;
-         }
+         tp_target = bid - (risk * InpMinRR);
       }
       
-      // Validate minimum RR
-      double risk = setup.stop_loss - bid;
-      double reward = bid - setup.take_profit;
-      
-      if(risk <= 0 || reward <= 0) return false;
-      if(reward / risk < InpMinRR) return false;
-      
+      setup.take_profit = tp_target;
       setup.comment = StringFormat("FibICT Sell [%.1f-%.1f%%]", InpFibEntryLow, InpFibEntryHigh);
    }
    else return false;
