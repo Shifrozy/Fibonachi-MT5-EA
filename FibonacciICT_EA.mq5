@@ -84,6 +84,28 @@ input group "=== ICT Settings ==="
 input int         InpBOS_Lookback       = 10;           // BOS Lookback Bars
 input int         InpFVG_MinSize        = 5;            // FVG Minimum Size (points)
 
+input group "=== Visualization Settings ==="
+input bool        InpShowDashboard      = true;         // Show Dashboard Panel
+input bool        InpShowFibLines       = true;         // Show Fibonacci Lines
+input bool        InpShowSwings         = true;         // Show Swing Points
+input bool        InpShowBOS            = true;         // Show BOS/CHoCH Labels
+input bool        InpShowFVG            = true;         // Show FVG Zones
+input bool        InpShowSessions       = true;         // Show Session Boxes
+input bool        InpShowTradeArrows    = true;         // Show Trade Entry Arrows
+input color       InpFibColor382        = clrDodgerBlue; // Fib 38.2% Color
+input color       InpFibColor500        = clrGold;       // Fib 50.0% Color
+input color       InpFibColor618        = clrOrange;     // Fib 61.8% Color
+input color       InpFibColor786        = clrRed;        // Fib 78.6% Color
+input color       InpBullColor          = clrLime;       // Bullish Color
+input color       InpBearColor          = clrCrimson;    // Bearish Color
+input color       InpFVGBullColor       = C'0,100,0';    // FVG Bullish Color
+input color       InpFVGBearColor       = C'100,0,0';    // FVG Bearish Color
+input color       InpSessionLondonColor = C'30,60,90';   // London Session Color
+input color       InpSessionAsianColor  = C'90,60,30';   // Asian Session Color
+input color       InpDashBgColor        = C'20,20,30';   // Dashboard Background
+input color       InpDashTextColor      = clrWhite;      // Dashboard Text Color
+input int         InpDashFontSize       = 9;             // Dashboard Font Size
+
 //+------------------------------------------------------------------+
 //| STRUCTURES                                                       |
 //+------------------------------------------------------------------+
@@ -146,6 +168,7 @@ SymbolData     g_symbols[3];
 int            g_total_symbols = 3;
 datetime       g_last_bar_time[];
 bool           g_initialized = false;
+string         g_obj_prefix = "FibICT_";
 
 //+------------------------------------------------------------------+
 //| Detect the correct order filling mode for the broker              |
@@ -271,6 +294,8 @@ void OnDeinit(const int reason)
       if(g_symbols[i].ma_slow_handle != INVALID_HANDLE) IndicatorRelease(g_symbols[i].ma_slow_handle);
       if(g_symbols[i].atr_handle != INVALID_HANDLE)     IndicatorRelease(g_symbols[i].atr_handle);
    }
+   // Clean up all visual objects
+   ObjectsDeleteAll(0, g_obj_prefix);
    PrintFormat("FibonacciICT EA deinitialized. Reason: %d", reason);
 }
 
@@ -315,6 +340,20 @@ void OnTick()
       
       // ---- STEP 1: HTF TREND BIAS ----
       g_symbols[i].htf_bias = GetHTFTrendBias(i);
+      
+      // ---- Draw visuals for current chart symbol ----
+      if(sym == Symbol())
+      {
+         // Draw session boxes
+         if(InpShowSessions) DrawSessionBoxes();
+         
+         // Draw swing points
+         if(InpShowSwings) DrawSwingPoints(i);
+         
+         // Draw dashboard (always update)
+         if(InpShowDashboard) DrawDashboard(i);
+      }
+      
       if(g_symbols[i].htf_bias == TREND_NEUTRAL)
          continue;
       
@@ -322,6 +361,10 @@ void OnTick()
       g_symbols[i].fib = CalculateFibonacciLevels(i);
       if(!g_symbols[i].fib.is_valid)
          continue;
+      
+      // ---- Draw Fibonacci Lines ----
+      if(sym == Symbol() && InpShowFibLines)
+         DrawFibonacciLevels(g_symbols[i].fib, g_symbols[i].htf_bias);
       
       // ---- STEP 3: CHECK IF PRICE IS IN FIB ZONE ----
       double current_price = SymbolInfoDouble(sym, SYMBOL_BID);
@@ -351,6 +394,10 @@ void OnTick()
       
       // ---- STEP 8: EXECUTE TRADE ----
       ExecuteTrade(setup, i);
+      
+      // ---- Draw trade arrow ----
+      if(sym == Symbol() && InpShowTradeArrows)
+         DrawTradeArrow(setup);
    }
 }
 
@@ -682,10 +729,14 @@ bool DetectBOS(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS expected_directio
    if(count < 3) return false;
    
    double close[];
+   datetime time[];
    ArraySetAsSeries(close, true);
+   ArraySetAsSeries(time, true);
    if(CopyClose(sym, tf, 0, 3, close) < 3) return false;
+   if(CopyTime(sym, tf, 0, 3, time) < 3) return false;
    
    double current_close = close[1]; // Previous completed candle
+   datetime candle_time = time[1];
    
    if(expected_direction == TREND_BULLISH)
    {
@@ -695,7 +746,10 @@ bool DetectBOS(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS expected_directio
          if(swings[i].is_high && swings[i].bar_index > 1)
          {
             if(current_close > swings[i].price)
+            {
+               DrawBOSLabel(sym, candle_time, swings[i].price, true);
                return true;
+            }
             break;
          }
       }
@@ -708,7 +762,10 @@ bool DetectBOS(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS expected_directio
          if(!swings[i].is_high && swings[i].bar_index > 1)
          {
             if(current_close < swings[i].price)
+            {
+               DrawBOSLabel(sym, candle_time, swings[i].price, false);
                return true;
+            }
             break;
          }
       }
@@ -747,31 +804,38 @@ bool DetectCHoCH(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS new_direction)
    
    if(sh_idx < 2 || sl_idx < 2) return false;
    
+   double close[];
+   datetime time[];
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(time, true);
+   if(CopyClose(sym, tf, 0, 2, close) < 2) return false;
+   if(CopyTime(sym, tf, 0, 2, time) < 2) return false;
+   
+   datetime candle_time = time[1];
+   
    if(new_direction == TREND_BULLISH)
    {
       // CHoCH to bullish: Was making LH/LL, now makes HL or HH
       bool was_bearish = (sh[0] < sh[1]) || (sl[0] < sl[1]);
       
-      double close[];
-      ArraySetAsSeries(close, true);
-      if(CopyClose(sym, tf, 0, 2, close) < 2) return false;
-      
       // Current price broke above the most recent lower high
       if(was_bearish && close[1] > sh[0])
+      {
+         DrawCHoCHLabel(sym, candle_time, sh[0], true);
          return true;
+      }
    }
    else if(new_direction == TREND_BEARISH)
    {
       // CHoCH to bearish: Was making HH/HL, now makes LH or LL
       bool was_bullish = (sh[0] > sh[1]) || (sl[0] > sl[1]);
       
-      double close[];
-      ArraySetAsSeries(close, true);
-      if(CopyClose(sym, tf, 0, 2, close) < 2) return false;
-      
       // Current price broke below the most recent higher low
       if(was_bullish && close[1] < sl[0])
+      {
+         DrawCHoCHLabel(sym, candle_time, sl[0], false);
          return true;
+      }
    }
    
    return false;
@@ -783,16 +847,19 @@ bool DetectCHoCH(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS new_direction)
 bool DetectFVG(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS direction, double &fvg_high, double &fvg_low)
 {
    double high[], low[], open_arr[], close[];
+   datetime time[];
    ArraySetAsSeries(high, true);
    ArraySetAsSeries(low, true);
    ArraySetAsSeries(open_arr, true);
    ArraySetAsSeries(close, true);
+   ArraySetAsSeries(time, true);
    
    int bars_to_check = 10;
    if(CopyHigh(sym, tf, 0, bars_to_check, high) < bars_to_check) return false;
    if(CopyLow(sym, tf, 0, bars_to_check, low) < bars_to_check) return false;
    if(CopyOpen(sym, tf, 0, bars_to_check, open_arr) < bars_to_check) return false;
    if(CopyClose(sym, tf, 0, bars_to_check, close) < bars_to_check) return false;
+   if(CopyTime(sym, tf, 0, bars_to_check, time) < bars_to_check) return false;
    
    double point = SymbolInfoDouble(sym, SYMBOL_POINT);
    double min_gap = InpFVG_MinSize * point;
@@ -812,6 +879,9 @@ bool DetectFVG(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS direction, double
             fvg_high = gap_top;
             fvg_low = gap_bottom;
             
+            // Draw FVG zone on chart
+            DrawFVGZone(sym, time[i], gap_top, gap_bottom, true);
+            
             // Check if current price is near this FVG
             double current = SymbolInfoDouble(sym, SYMBOL_BID);
             if(current >= gap_bottom && current <= gap_top)
@@ -828,6 +898,9 @@ bool DetectFVG(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS direction, double
          {
             fvg_high = gap_top;
             fvg_low = gap_bottom;
+            
+            // Draw FVG zone on chart
+            DrawFVGZone(sym, time[i], gap_top, gap_bottom, false);
             
             double current = SymbolInfoDouble(sym, SYMBOL_BID);
             if(current >= gap_bottom && current <= gap_top)
@@ -1293,5 +1366,577 @@ int CountOpenPositions(string sym)
          count++;
    }
    return count;
+}
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//|                    V I S U A L I Z A T I O N S                   |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Helper: Create/Update a horizontal line                          |
+//+------------------------------------------------------------------+
+void CreateHLine(string name, double price, color clr, int width, ENUM_LINE_STYLE style)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+   }
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+   ObjectSetInteger(0, name, OBJPROP_BACK, true);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Create/Update a text label on chart                      |
+//+------------------------------------------------------------------+
+void CreateLabel(string name, int x, int y, string text, color clr, int font_size, ENUM_ANCHOR_POINT anchor = ANCHOR_LEFT_UPPER)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
+   ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, anchor);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Create a rectangle background for dashboard              |
+//+------------------------------------------------------------------+
+void CreateRectLabel(string name, int x, int y, int width, int height, color bg_color)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   }
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg_color);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrDimGray);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| DRAW DASHBOARD PANEL                                             |
+//+------------------------------------------------------------------+
+void DrawDashboard(int sym_index)
+{
+   int x = 15, y = 30;
+   int line_height = (int)(InpDashFontSize * 1.8);
+   int panel_width = 260;
+   string sym = g_symbols[sym_index].symbol;
+   ENUM_TREND_BIAS bias = g_symbols[sym_index].htf_bias;
+   FibLevels fib = g_symbols[sym_index].fib;
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   
+   // Determine active session
+   string session_str = "None";
+   color session_clr = clrGray;
+   if(IsInSession(0)) { session_str = "LONDON"; session_clr = clrDodgerBlue; }
+   if(IsInSession(1)) { session_str = "ASIAN"; session_clr = clrOrangeRed; }
+   
+   // Trend bias text
+   string bias_str = "NEUTRAL";
+   color bias_clr = clrGray;
+   if(bias == TREND_BULLISH) { bias_str = "▲ BULLISH"; bias_clr = InpBullColor; }
+   else if(bias == TREND_BEARISH) { bias_str = "▼ BEARISH"; bias_clr = InpBearColor; }
+   
+   // Price in fib zone?
+   double price = SymbolInfoDouble(sym, SYMBOL_BID);
+   string zone_str = "Outside";
+   color zone_clr = clrGray;
+   if(fib.is_valid)
+   {
+      if(IsPriceInFibZone(price, fib, bias)) { zone_str = "IN ZONE ✓"; zone_clr = InpBullColor; }
+      else if(IsFibInvalidated(price, fib)) { zone_str = "INVALIDATED ✗"; zone_clr = InpBearColor; }
+      else { zone_str = "Waiting..."; zone_clr = clrYellow; }
+   }
+   
+   // Count total panel lines
+   int total_lines = 12;
+   if(fib.is_valid) total_lines += 4;
+   int panel_height = total_lines * line_height + 15;
+   
+   // Background panel
+   CreateRectLabel(g_obj_prefix + "dash_bg", x - 5, y - 5, panel_width, panel_height, InpDashBgColor);
+   
+   int row = 0;
+   
+   // Title
+   CreateLabel(g_obj_prefix + "d_title", x, y + row * line_height, "══ FibonacciICT EA ══", clrGold, InpDashFontSize + 1);
+   row++;
+   CreateLabel(g_obj_prefix + "d_sep1", x, y + row * line_height, "─────────────────────────", clrDimGray, InpDashFontSize - 1);
+   row++;
+   
+   // Symbol info
+   double spread = SymbolInfoInteger(sym, SYMBOL_SPREAD) * SymbolInfoDouble(sym, SYMBOL_POINT);
+   CreateLabel(g_obj_prefix + "d_sym", x, y + row * line_height, 
+      StringFormat("Symbol:  %s", sym), InpDashTextColor, InpDashFontSize);
+   row++;
+   CreateLabel(g_obj_prefix + "d_price", x, y + row * line_height, 
+      StringFormat("Price:   %.*f  Spread: %.1f", digits, price, SymbolInfoInteger(sym, SYMBOL_SPREAD) * 0.1), InpDashTextColor, InpDashFontSize);
+   row++;
+   
+   // Trend
+   CreateLabel(g_obj_prefix + "d_sep2", x, y + row * line_height, "─────────────────────────", clrDimGray, InpDashFontSize - 1);
+   row++;
+   CreateLabel(g_obj_prefix + "d_trend", x, y + row * line_height, 
+      StringFormat("HTF Bias: %s", bias_str), bias_clr, InpDashFontSize);
+   row++;
+   
+   // Session
+   CreateLabel(g_obj_prefix + "d_session", x, y + row * line_height, 
+      StringFormat("Session:  %s", session_str), session_clr, InpDashFontSize);
+   row++;
+   
+   // Fib Zone Status
+   CreateLabel(g_obj_prefix + "d_zone", x, y + row * line_height, 
+      StringFormat("Fib Zone: %s", zone_str), zone_clr, InpDashFontSize);
+   row++;
+   
+   // Trades
+   CreateLabel(g_obj_prefix + "d_trades", x, y + row * line_height, 
+      StringFormat("Trades:   %d / %d", g_symbols[sym_index].trades_this_session, InpMaxTradesPerSession), InpDashTextColor, InpDashFontSize);
+   row++;
+   
+   // Fibonacci Levels
+   if(fib.is_valid)
+   {
+      CreateLabel(g_obj_prefix + "d_sep3", x, y + row * line_height, "─────────────────────────", clrDimGray, InpDashFontSize - 1);
+      row++;
+      CreateLabel(g_obj_prefix + "d_fib_title", x, y + row * line_height, "Fibonacci Levels:", clrGold, InpDashFontSize);
+      row++;
+      CreateLabel(g_obj_prefix + "d_fib382", x, y + row * line_height, 
+         StringFormat("  38.2%%:  %.*f", digits, fib.level_382), InpFibColor382, InpDashFontSize);
+      row++;
+      CreateLabel(g_obj_prefix + "d_fib500", x, y + row * line_height, 
+         StringFormat("  50.0%%:  %.*f", digits, fib.level_500), InpFibColor500, InpDashFontSize);
+      row++;
+      CreateLabel(g_obj_prefix + "d_fib618", x, y + row * line_height, 
+         StringFormat("  61.8%%:  %.*f", digits, fib.level_618), InpFibColor618, InpDashFontSize);
+      row++;
+      CreateLabel(g_obj_prefix + "d_fib786", x, y + row * line_height, 
+         StringFormat("  78.6%%:  %.*f", digits, fib.level_786), InpFibColor786, InpDashFontSize);
+      row++;
+   }
+   else
+   {
+      CreateLabel(g_obj_prefix + "d_sep3", x, y + row * line_height, "─────────────────────────", clrDimGray, InpDashFontSize - 1);
+      row++;
+      CreateLabel(g_obj_prefix + "d_fib_title", x, y + row * line_height, "Fibonacci: Calculating...", clrGray, InpDashFontSize);
+      row++;
+      // Clear old fib labels
+      ObjectDelete(0, g_obj_prefix + "d_fib382");
+      ObjectDelete(0, g_obj_prefix + "d_fib500");
+      ObjectDelete(0, g_obj_prefix + "d_fib618");
+      ObjectDelete(0, g_obj_prefix + "d_fib786");
+   }
+   
+   // Open positions
+   CreateLabel(g_obj_prefix + "d_sep4", x, y + row * line_height, "─────────────────────────", clrDimGray, InpDashFontSize - 1);
+   row++;
+   int open_pos = CountOpenPositions(sym);
+   color pos_clr = (open_pos > 0) ? InpBullColor : clrGray;
+   CreateLabel(g_obj_prefix + "d_pos", x, y + row * line_height, 
+      StringFormat("Positions: %d", open_pos), pos_clr, InpDashFontSize);
+   row++;
+   
+   // Account info
+   CreateLabel(g_obj_prefix + "d_bal", x, y + row * line_height, 
+      StringFormat("Balance:   $%.2f", AccountInfoDouble(ACCOUNT_BALANCE)), InpDashTextColor, InpDashFontSize);
+   row++;
+   CreateLabel(g_obj_prefix + "d_equity", x, y + row * line_height, 
+      StringFormat("Equity:    $%.2f", AccountInfoDouble(ACCOUNT_EQUITY)), InpDashTextColor, InpDashFontSize);
+   
+   ChartRedraw(0);
+}
+
+//+------------------------------------------------------------------+
+//| DRAW FIBONACCI LINES                                             |
+//+------------------------------------------------------------------+
+void DrawFibonacciLevels(FibLevels &fib, ENUM_TREND_BIAS bias)
+{
+   if(!fib.is_valid) return;
+   
+   int digits = (int)SymbolInfoInteger(Symbol(), SYMBOL_DIGITS);
+   
+   // Swing High/Low lines
+   CreateHLine(g_obj_prefix + "fib_sh", fib.swing_high, clrSilver, 1, STYLE_SOLID);
+   CreateHLine(g_obj_prefix + "fib_sl", fib.swing_low, clrSilver, 1, STYLE_SOLID);
+   
+   // Fib level lines
+   CreateHLine(g_obj_prefix + "fib_382", fib.level_382, InpFibColor382, 1, STYLE_DASH);
+   CreateHLine(g_obj_prefix + "fib_500", fib.level_500, InpFibColor500, 2, STYLE_DASH);
+   CreateHLine(g_obj_prefix + "fib_618", fib.level_618, InpFibColor618, 1, STYLE_DOT);
+   CreateHLine(g_obj_prefix + "fib_786", fib.level_786, InpFibColor786, 2, STYLE_DASHDOT);
+   
+   // Price labels on right side
+   datetime label_time = iTime(Symbol(), InpEntryTF, 0) + PeriodSeconds(InpEntryTF) * 3;
+   
+   string labels[][2];
+   ArrayResize(labels, 6);
+   
+   // Create text objects at price levels
+   CreatePriceLabel(g_obj_prefix + "fib_lbl_sh", label_time, fib.swing_high, 
+      StringFormat("── Swing High %.*f", digits, fib.swing_high), clrSilver);
+   CreatePriceLabel(g_obj_prefix + "fib_lbl_sl", label_time, fib.swing_low, 
+      StringFormat("── Swing Low %.*f", digits, fib.swing_low), clrSilver);
+   CreatePriceLabel(g_obj_prefix + "fib_lbl_382", label_time, fib.level_382, 
+      StringFormat("── 38.2%% %.*f", digits, fib.level_382), InpFibColor382);
+   CreatePriceLabel(g_obj_prefix + "fib_lbl_500", label_time, fib.level_500, 
+      StringFormat("── 50.0%% %.*f", digits, fib.level_500), InpFibColor500);
+   CreatePriceLabel(g_obj_prefix + "fib_lbl_618", label_time, fib.level_618, 
+      StringFormat("── 61.8%% %.*f", digits, fib.level_618), InpFibColor618);
+   CreatePriceLabel(g_obj_prefix + "fib_lbl_786", label_time, fib.level_786, 
+      StringFormat("── 78.6%% %.*f", digits, fib.level_786), InpFibColor786);
+   
+   // Entry zone rectangle (shaded area between 38.2% and 50%)
+   double zone_top, zone_bottom;
+   if(bias == TREND_BULLISH)
+   {
+      zone_top = fib.level_382;
+      zone_bottom = fib.level_500;
+   }
+   else
+   {
+      zone_top = fib.level_500;
+      zone_bottom = fib.level_382;
+   }
+   
+   datetime rect_start = iTime(Symbol(), InpStructureTF, InpSwingLookback);
+   datetime rect_end = iTime(Symbol(), InpEntryTF, 0) + PeriodSeconds(InpEntryTF) * 5;
+   
+   string rect_name = g_obj_prefix + "fib_zone";
+   if(ObjectFind(0, rect_name) < 0)
+      ObjectCreate(0, rect_name, OBJ_RECTANGLE, 0, rect_start, zone_top, rect_end, zone_bottom);
+   else
+   {
+      ObjectSetInteger(0, rect_name, OBJPROP_TIME, 0, rect_start);
+      ObjectSetDouble(0, rect_name, OBJPROP_PRICE, 0, zone_top);
+      ObjectSetInteger(0, rect_name, OBJPROP_TIME, 1, rect_end);
+      ObjectSetDouble(0, rect_name, OBJPROP_PRICE, 1, zone_bottom);
+   }
+   ObjectSetInteger(0, rect_name, OBJPROP_COLOR, (bias == TREND_BULLISH) ? C'0,80,0' : C'80,0,0');
+   ObjectSetInteger(0, rect_name, OBJPROP_FILL, true);
+   ObjectSetInteger(0, rect_name, OBJPROP_BACK, true);
+   ObjectSetInteger(0, rect_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, rect_name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Price label at a specific time and price                  |
+//+------------------------------------------------------------------+
+void CreatePriceLabel(string name, datetime time, double price, string text, color clr)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_TEXT, 0, time, price);
+   
+   ObjectSetInteger(0, name, OBJPROP_TIME, time);
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+   ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| DRAW SWING POINTS                                                |
+//+------------------------------------------------------------------+
+void DrawSwingPoints(int sym_index)
+{
+   string sym = g_symbols[sym_index].symbol;
+   
+   // Only draw on the chart's symbol
+   if(sym != Symbol()) return;
+   
+   // Remove old swing arrows
+   int obj_total = ObjectsTotal(0, 0);
+   for(int k = obj_total - 1; k >= 0; k--)
+   {
+      string obj_name = ObjectGetString(0, ObjectName(0, k), OBJPROP_NAME);
+      if(StringFind(obj_name, g_obj_prefix + "swing_") == 0)
+         ObjectDelete(0, obj_name);
+   }
+   
+   SwingPoint swings[];
+   int count = DetectSwingPoints(sym, InpStructureTF, InpSwingLookback, swings);
+   
+   int max_display = MathMin(count, 20); // Limit display count
+   
+   for(int i = 0; i < max_display; i++)
+   {
+      string arrow_name = g_obj_prefix + StringFormat("swing_%d", i);
+      
+      if(swings[i].is_high)
+      {
+         // Swing High — down arrow above the high
+         ObjectCreate(0, arrow_name, OBJ_ARROW, 0, swings[i].time, swings[i].price);
+         ObjectSetInteger(0, arrow_name, OBJPROP_ARROWCODE, 218); // ▼ down triangle
+         ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, InpBearColor);
+         ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 2);
+         ObjectSetInteger(0, arrow_name, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
+      }
+      else
+      {
+         // Swing Low — up arrow below the low
+         ObjectCreate(0, arrow_name, OBJ_ARROW, 0, swings[i].time, swings[i].price);
+         ObjectSetInteger(0, arrow_name, OBJPROP_ARROWCODE, 217); // ▲ up triangle
+         ObjectSetInteger(0, arrow_name, OBJPROP_COLOR, InpBullColor);
+         ObjectSetInteger(0, arrow_name, OBJPROP_WIDTH, 2);
+         ObjectSetInteger(0, arrow_name, OBJPROP_ANCHOR, ANCHOR_TOP);
+      }
+      
+      ObjectSetInteger(0, arrow_name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, arrow_name, OBJPROP_HIDDEN, true);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| DRAW BOS / CHoCH LABELS (called from detection functions)        |
+//+------------------------------------------------------------------+
+void DrawBOSLabel(string sym, datetime time, double price, bool is_bullish)
+{
+   if(!InpShowBOS || sym != Symbol()) return;
+   
+   static int bos_count = 0;
+   bos_count++;
+   string name = g_obj_prefix + StringFormat("bos_%d", bos_count);
+   
+   ObjectCreate(0, name, OBJ_TEXT, 0, time, price);
+   ObjectSetString(0, name, OBJPROP_TEXT, is_bullish ? "BOS ▲" : "BOS ▼");
+   ObjectSetInteger(0, name, OBJPROP_COLOR, is_bullish ? InpBullColor : InpBearColor);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, is_bullish ? ANCHOR_LOWER : ANCHOR_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+void DrawCHoCHLabel(string sym, datetime time, double price, bool is_bullish)
+{
+   if(!InpShowBOS || sym != Symbol()) return;
+   
+   static int choch_count = 0;
+   choch_count++;
+   string name = g_obj_prefix + StringFormat("choch_%d", choch_count);
+   
+   ObjectCreate(0, name, OBJ_TEXT, 0, time, price);
+   ObjectSetString(0, name, OBJPROP_TEXT, is_bullish ? "CHoCH ▲" : "CHoCH ▼");
+   ObjectSetInteger(0, name, OBJPROP_COLOR, is_bullish ? clrCyan : clrMagenta);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, is_bullish ? ANCHOR_LOWER : ANCHOR_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| DRAW FVG ZONE                                                    |
+//+------------------------------------------------------------------+
+void DrawFVGZone(string sym, datetime time, double fvg_top, double fvg_bottom, bool is_bullish)
+{
+   if(!InpShowFVG || sym != Symbol()) return;
+   
+   static int fvg_count = 0;
+   fvg_count++;
+   string name = g_obj_prefix + StringFormat("fvg_%d", fvg_count);
+   
+   datetime end_time = time + PeriodSeconds(InpEntryTF) * 10;
+   
+   ObjectCreate(0, name, OBJ_RECTANGLE, 0, time, fvg_top, end_time, fvg_bottom);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, is_bullish ? InpFVGBullColor : InpFVGBearColor);
+   ObjectSetInteger(0, name, OBJPROP_FILL, true);
+   ObjectSetInteger(0, name, OBJPROP_BACK, true);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+   
+   // FVG label
+   string lbl_name = g_obj_prefix + StringFormat("fvg_lbl_%d", fvg_count);
+   ObjectCreate(0, lbl_name, OBJ_TEXT, 0, time, (fvg_top + fvg_bottom) / 2.0);
+   ObjectSetString(0, lbl_name, OBJPROP_TEXT, "FVG");
+   ObjectSetInteger(0, lbl_name, OBJPROP_COLOR, is_bullish ? clrLime : clrRed);
+   ObjectSetInteger(0, lbl_name, OBJPROP_FONTSIZE, 7);
+   ObjectSetString(0, lbl_name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, lbl_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, lbl_name, OBJPROP_HIDDEN, true);
+}
+
+//+------------------------------------------------------------------+
+//| DRAW SESSION BOXES                                               |
+//+------------------------------------------------------------------+
+void DrawSessionBoxes()
+{
+   // Draw session boxes for the last 5 days
+   datetime current_time = TimeCurrent();
+   
+   for(int day = 0; day < 5; day++)
+   {
+      MqlDateTime dt;
+      TimeToStruct(current_time - day * 86400, dt);
+      
+      // Skip weekends
+      if(dt.day_of_week == 0 || dt.day_of_week == 6) continue;
+      
+      // London session box
+      datetime london_start, london_end;
+      dt.hour = InpLondonStartHour;
+      dt.min = 0;
+      dt.sec = 0;
+      london_start = StructToTime(dt);
+      dt.hour = InpLondonEndHour;
+      london_end = StructToTime(dt);
+      
+      string lon_name = g_obj_prefix + StringFormat("session_lon_%d", day);
+      double chart_high = ChartGetDouble(0, CHART_PRICE_MAX, 0);
+      double chart_low = ChartGetDouble(0, CHART_PRICE_MIN, 0);
+      
+      if(ObjectFind(0, lon_name) < 0)
+         ObjectCreate(0, lon_name, OBJ_RECTANGLE, 0, london_start, chart_high, london_end, chart_low);
+      else
+      {
+         ObjectSetInteger(0, lon_name, OBJPROP_TIME, 0, london_start);
+         ObjectSetDouble(0, lon_name, OBJPROP_PRICE, 0, chart_high);
+         ObjectSetInteger(0, lon_name, OBJPROP_TIME, 1, london_end);
+         ObjectSetDouble(0, lon_name, OBJPROP_PRICE, 1, chart_low);
+      }
+      ObjectSetInteger(0, lon_name, OBJPROP_COLOR, InpSessionLondonColor);
+      ObjectSetInteger(0, lon_name, OBJPROP_FILL, true);
+      ObjectSetInteger(0, lon_name, OBJPROP_BACK, true);
+      ObjectSetInteger(0, lon_name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, lon_name, OBJPROP_HIDDEN, true);
+      
+      // Asian session box  
+      datetime asian_start, asian_end;
+      MqlDateTime dt2;
+      TimeToStruct(current_time - day * 86400, dt2);
+      
+      // Asian wraps midnight
+      dt2.hour = InpAsianStartHour;
+      dt2.min = 0;
+      dt2.sec = 0;
+      if(InpAsianStartHour > InpAsianEndHour)
+      {
+         // Previous day start
+         asian_start = StructToTime(dt2) - 86400;
+         dt2.hour = InpAsianEndHour;
+         asian_end = StructToTime(dt2);
+      }
+      else
+      {
+         asian_start = StructToTime(dt2);
+         dt2.hour = InpAsianEndHour;
+         asian_end = StructToTime(dt2);
+      }
+      
+      string asia_name = g_obj_prefix + StringFormat("session_asia_%d", day);
+      if(ObjectFind(0, asia_name) < 0)
+         ObjectCreate(0, asia_name, OBJ_RECTANGLE, 0, asian_start, chart_high, asian_end, chart_low);
+      else
+      {
+         ObjectSetInteger(0, asia_name, OBJPROP_TIME, 0, asian_start);
+         ObjectSetDouble(0, asia_name, OBJPROP_PRICE, 0, chart_high);
+         ObjectSetInteger(0, asia_name, OBJPROP_TIME, 1, asian_end);
+         ObjectSetDouble(0, asia_name, OBJPROP_PRICE, 1, chart_low);
+      }
+      ObjectSetInteger(0, asia_name, OBJPROP_COLOR, InpSessionAsianColor);
+      ObjectSetInteger(0, asia_name, OBJPROP_FILL, true);
+      ObjectSetInteger(0, asia_name, OBJPROP_BACK, true);
+      ObjectSetInteger(0, asia_name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, asia_name, OBJPROP_HIDDEN, true);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| DRAW TRADE ENTRY ARROW                                           |
+//+------------------------------------------------------------------+
+void DrawTradeArrow(TradeSetup &setup)
+{
+   if(setup.symbol != Symbol()) return;
+   
+   static int trade_arrow_count = 0;
+   trade_arrow_count++;
+   
+   int digits = (int)SymbolInfoInteger(setup.symbol, SYMBOL_DIGITS);
+   datetime time = TimeCurrent();
+   
+   // Entry arrow
+   string entry_name = g_obj_prefix + StringFormat("trade_entry_%d", trade_arrow_count);
+   ObjectCreate(0, entry_name, OBJ_ARROW, 0, time, setup.entry_price);
+   
+   if(setup.direction == 1) // BUY
+   {
+      ObjectSetInteger(0, entry_name, OBJPROP_ARROWCODE, 233); // ▲ big up arrow
+      ObjectSetInteger(0, entry_name, OBJPROP_COLOR, InpBullColor);
+      ObjectSetInteger(0, entry_name, OBJPROP_ANCHOR, ANCHOR_TOP);
+   }
+   else // SELL
+   {
+      ObjectSetInteger(0, entry_name, OBJPROP_ARROWCODE, 234); // ▼ big down arrow
+      ObjectSetInteger(0, entry_name, OBJPROP_COLOR, InpBearColor);
+      ObjectSetInteger(0, entry_name, OBJPROP_ANCHOR, ANCHOR_BOTTOM);
+   }
+   ObjectSetInteger(0, entry_name, OBJPROP_WIDTH, 3);
+   ObjectSetInteger(0, entry_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, entry_name, OBJPROP_HIDDEN, true);
+   
+   // SL line
+   string sl_name = g_obj_prefix + StringFormat("trade_sl_%d", trade_arrow_count);
+   datetime sl_end = time + PeriodSeconds(InpEntryTF) * 20;
+   ObjectCreate(0, sl_name, OBJ_TREND, 0, time, setup.stop_loss, sl_end, setup.stop_loss);
+   ObjectSetInteger(0, sl_name, OBJPROP_COLOR, InpBearColor);
+   ObjectSetInteger(0, sl_name, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, sl_name, OBJPROP_STYLE, STYLE_DASH);
+   ObjectSetInteger(0, sl_name, OBJPROP_RAY_RIGHT, false);
+   ObjectSetInteger(0, sl_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, sl_name, OBJPROP_HIDDEN, true);
+   
+   // TP line
+   string tp_name = g_obj_prefix + StringFormat("trade_tp_%d", trade_arrow_count);
+   ObjectCreate(0, tp_name, OBJ_TREND, 0, time, setup.take_profit, sl_end, setup.take_profit);
+   ObjectSetInteger(0, tp_name, OBJPROP_COLOR, InpBullColor);
+   ObjectSetInteger(0, tp_name, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, tp_name, OBJPROP_STYLE, STYLE_DASH);
+   ObjectSetInteger(0, tp_name, OBJPROP_RAY_RIGHT, false);
+   ObjectSetInteger(0, tp_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, tp_name, OBJPROP_HIDDEN, true);
+   
+   // Trade info label
+   string info_name = g_obj_prefix + StringFormat("trade_info_%d", trade_arrow_count);
+   double label_price = (setup.direction == 1) ? setup.entry_price - 10 * SymbolInfoDouble(setup.symbol, SYMBOL_POINT) 
+                                               : setup.entry_price + 10 * SymbolInfoDouble(setup.symbol, SYMBOL_POINT);
+   double rr = MathAbs(setup.take_profit - setup.entry_price) / MathAbs(setup.entry_price - setup.stop_loss);
+   
+   ObjectCreate(0, info_name, OBJ_TEXT, 0, time, label_price);
+   ObjectSetString(0, info_name, OBJPROP_TEXT, 
+      StringFormat("%s %.2f lots | RR: %.1f", (setup.direction == 1) ? "BUY" : "SELL", setup.lot_size, rr));
+   ObjectSetInteger(0, info_name, OBJPROP_COLOR, (setup.direction == 1) ? InpBullColor : InpBearColor);
+   ObjectSetInteger(0, info_name, OBJPROP_FONTSIZE, 8);
+   ObjectSetString(0, info_name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetInteger(0, info_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, info_name, OBJPROP_HIDDEN, true);
+   
+   ChartRedraw(0);
 }
 //+------------------------------------------------------------------+
