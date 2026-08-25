@@ -46,9 +46,9 @@ input int         InpMaxTradesPerSession= 2;            // Max Trades per Sessio
 input int         InpSlippage           = 30;           // Slippage (points)
 
 input group "=== Symbol Settings ==="
-input string      InpSymbol1            = "EURUSD";     // Symbol 1 (London)
-input string      InpSymbol2            = "XAUUSD";     // Symbol 2 (London)
-input string      InpSymbol3            = "AUDJPY";     // Symbol 3 (Asian)
+input string      InpSymbol1            = "EURUSDm";    // Symbol 1 (London)
+input string      InpSymbol2            = "XAUUSDm";    // Symbol 2 (London)
+input string      InpSymbol3            = "AUDJPYm";    // Symbol 3 (Asian)
 
 input group "=== Session Settings (GMT Hours) ==="
 input int         InpLondonStartHour    = 8;            // London Session Start (GMT)
@@ -122,6 +122,7 @@ struct SymbolData
 {
    string            symbol;
    int               session_type;     // 0 = London, 1 = Asian
+   bool              enabled;          // false if symbol not found on broker
    int               ma_fast_handle;
    int               ma_mid_handle;
    int               ma_slow_handle;
@@ -147,6 +148,21 @@ datetime       g_last_bar_time[];
 bool           g_initialized = false;
 
 //+------------------------------------------------------------------+
+//| Detect the correct order filling mode for the broker              |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING GetFillingMode(string sym)
+{
+   long filling_mode = SymbolInfoInteger(sym, SYMBOL_FILLING_MODE);
+   
+   if((filling_mode & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      return ORDER_FILLING_FOK;
+   if((filling_mode & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      return ORDER_FILLING_IOC;
+   
+   return ORDER_FILLING_RETURN;
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                    |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -154,7 +170,6 @@ int OnInit()
    // Setup trade object
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetDeviationInPoints(InpSlippage);
-   trade.SetTypeFilling(ORDER_FILLING_IOC);
    
    // Initialize symbols
    g_symbols[0].symbol = InpSymbol1;
@@ -168,17 +183,27 @@ int OnInit()
    
    ArrayResize(g_last_bar_time, g_total_symbols);
    
+   int enabled_count = 0;
+   
    // Initialize handles for each symbol
    for(int i = 0; i < g_total_symbols; i++)
    {
       string sym = g_symbols[i].symbol;
+      g_symbols[i].enabled = false;
+      g_symbols[i].ma_fast_handle = INVALID_HANDLE;
+      g_symbols[i].ma_mid_handle = INVALID_HANDLE;
+      g_symbols[i].ma_slow_handle = INVALID_HANDLE;
+      g_symbols[i].atr_handle = INVALID_HANDLE;
       
-      // Check if symbol exists
+      // Check if symbol exists — skip if not found (don't crash)
       if(!SymbolSelect(sym, true))
       {
-         PrintFormat("ERROR: Symbol %s not found!", sym);
-         return INIT_FAILED;
+         PrintFormat("WARNING: Symbol %s not found on this broker — skipping. Check your symbol names in inputs.", sym);
+         continue;
       }
+      
+      // Auto-detect filling mode for this broker
+      trade.SetTypeFilling(GetFillingMode(sym));
       
       // Create MA handles
       if(InpUseMA)
@@ -191,8 +216,8 @@ int OnInit()
             g_symbols[i].ma_mid_handle == INVALID_HANDLE || 
             g_symbols[i].ma_slow_handle == INVALID_HANDLE)
          {
-            PrintFormat("ERROR: Failed to create MA handles for %s", sym);
-            return INIT_FAILED;
+            PrintFormat("WARNING: Failed to create MA handles for %s — skipping this symbol.", sym);
+            continue;
          }
       }
       
@@ -200,9 +225,13 @@ int OnInit()
       g_symbols[i].atr_handle = iATR(sym, InpEntryTF, InpTrailingATRPeriod);
       if(g_symbols[i].atr_handle == INVALID_HANDLE)
       {
-         PrintFormat("ERROR: Failed to create ATR handle for %s", sym);
-         return INIT_FAILED;
+         PrintFormat("WARNING: Failed to create ATR handle for %s — skipping this symbol.", sym);
+         continue;
       }
+      
+      // If we reach here, symbol is fully ready
+      g_symbols[i].enabled = true;
+      enabled_count++;
       
       g_symbols[i].htf_bias = TREND_NEUTRAL;
       g_symbols[i].fib.is_valid = false;
@@ -212,10 +241,20 @@ int OnInit()
       
       ArrayResize(g_symbols[i].breakeven_applied, 0);
       ArrayResize(g_symbols[i].partial_closed, 0);
+      
+      PrintFormat("OK: Symbol %s initialized successfully.", sym);
+   }
+   
+   if(enabled_count == 0)
+   {
+      Alert("FibonacciICT EA: No valid symbols found! Check your symbol names in the inputs (e.g. XAUUSD vs XAUUSDm vs GOLD).");
+      PrintFormat("ERROR: No valid symbols found. Check Inputs tab for correct symbol names on your broker.");
+      return INIT_SUCCEEDED; // Return SUCCEEDED so EA stays on chart and shows the alert
    }
    
    g_initialized = true;
-   PrintFormat("FibonacciICT EA initialized. Magic: %d, Risk: %.1f%%", InpMagicNumber, InpRiskPercent);
+   PrintFormat("FibonacciICT EA initialized. Magic: %d, Risk: %.1f%%, Active Symbols: %d/%d", 
+      InpMagicNumber, InpRiskPercent, enabled_count, g_total_symbols);
    
    return INIT_SUCCEEDED;
 }
@@ -246,6 +285,9 @@ void OnTick()
    for(int i = 0; i < g_total_symbols; i++)
    {
       string sym = g_symbols[i].symbol;
+      
+      // Skip symbols that weren't found on this broker
+      if(!g_symbols[i].enabled) continue;
       
       // ---- TRADE MANAGEMENT (every tick) ----
       ManageOpenTrades(i);
