@@ -117,3 +117,7 @@ $$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Sto
 ### 🔒 1:1 Breakeven Stop-Lock
 - When unrealized profit reaches **1:1 Risk:Reward**, the Stop Loss is automatically shifted to **Entry Price + 10 points profit**.
 - Completely eliminates downside capital risk while allowing the trade to reach maximum target extensions.
+
+### 💰 50% Partial Close at TP1
+- When price achieves TP1 (default **1:1.5 RR**), the EA executes an automated single partial close of **50% of the position volume**.
+- Guaranteed profit is banked into the account balance immediately.
