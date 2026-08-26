@@ -190,3 +190,11 @@ To backtest the EA in MetaTrader 5 Strategy Tester (<kbd>Ctrl+R</kbd>):
 4. **Execution Modeling:** Select `Every tick based on real ticks` (recommended) or `1 minute OHLC`.
 5. **Deposit:** Set to your planned initial balance (e.g. `$10,000`).
 6. Click **Start** to run the simulation and analyze profit factor, Sharpe ratio, and drawdown metrics.
+
+## 📊 Recommended Pair Specifications
+
+| Pair | Primary Session | Typical Spread | Target Timeframe | Strategy Profile |
+| :--- | :--- | :--- | :--- | :--- |
+| **EURUSD** | London (07:00–17:00 GMT) | 0.0 – 1.0 pips | M15 / H1 | Consistent institutional structure & clean pullbacks. |
+| **XAUUSD (Gold)** | London & NY Overlap | 1.0 – 2.5 pips | M15 / H1 | High volatility; large reward expansions on 50%–61.8% OTE. |
+| **AUDJPY** | Asian (23:00–09:00 GMT) | 0.8 – 1.5 pips | M15 / H1 | Smooth Asian session trending and structural respect. |
