@@ -121,3 +121,7 @@ $$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Sto
 ### 💰 50% Partial Close at TP1
 - When price achieves TP1 (default **1:1.5 RR**), the EA executes an automated single partial close of **50% of the position volume**.
 - Guaranteed profit is banked into the account balance immediately.
+
+### 📈 Volatility-Based ATR Trailing Stop
+- Following Breakeven and TP1, the remaining 50% position volume is protected by an adaptive **ATR(14) Trailing Stop** (multiplier `1.5x`).
+- Lets profitable trends run freely toward higher timeframe structural resistance/support levels.
