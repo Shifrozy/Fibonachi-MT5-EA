@@ -198,3 +198,20 @@ To backtest the EA in MetaTrader 5 Strategy Tester (<kbd>Ctrl+R</kbd>):
 | **EURUSD** | London (07:00–17:00 GMT) | 0.0 – 1.0 pips | M15 / H1 | Consistent institutional structure & clean pullbacks. |
 | **XAUUSD (Gold)** | London & NY Overlap | 1.0 – 2.5 pips | M15 / H1 | High volatility; large reward expansions on 50%–61.8% OTE. |
 | **AUDJPY** | Asian (23:00–09:00 GMT) | 0.8 – 1.5 pips | M15 / H1 | Smooth Asian session trending and structural respect. |
+
+## ❓ Frequently Asked Questions (FAQ)
+
+<details>
+<summary><strong>Q: Why does the EA wait before opening trades?</strong></summary>
+The EA is an institutional pullback algorithm, not a high-frequency scalper or grid bot. It only executes when 1H macro trend, 15M Fibonacci retracement, and ICT candlestick triggers align simultaneously. Expect 1–3 high-quality setups per active session.
+</details>
+
+<details>
+<summary><strong>Q: What happens if a broker symbol has a suffix?</strong></summary>
+The EA automatically detects your broker's order filling mode (FOK/IOC/Return) and logs any missing symbol names. Simply update the symbol names in the Inputs tab.
+</details>
+
+<details>
+<summary><strong>Q: Does the EA support prop firm challenges (FTMO, FundedNext, etc.)?</strong></summary>
+Yes. With strict percentage-based position sizing, hard stop losses on every trade, 1:1 breakeven protection, and no martingale or grid averaging, the EA complies with institutional prop firm risk parameters.
+</details>
