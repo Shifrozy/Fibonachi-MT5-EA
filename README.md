@@ -169,3 +169,13 @@ The EA includes a high-performance visual display powered by a dedicated 1-secon
 3. **Enable Algo Trading:** Click the **Algo Trading** button on the top MT5 toolbar (must be green).
 4. **Attach EA:** Open a **15-minute (M15)** chart of EURUSD, Gold (XAUUSD), or AUDJPY. Drag the EA onto the chart.
 5. **Permissions:** In the *Common* tab, check **Allow Algo Trading** and click **OK**.
+
+## 🌐 Broker Symbol Suffix Configuration
+
+Brokers use different naming conventions for symbols. Update the inputs to match your broker:
+
+- Standard: `EURUSD`, `XAUUSD`, `AUDJPY`
+- Raw / Micro ('m' suffix): `EURUSDm`, `XAUUSDm`, `AUDJPYm`
+- Pro / ECN ('.' suffix): `EURUSD.pro`, `XAUUSD.pro`, `GOLD`
+
+Open the EA **Inputs** tab and update `InpSymbol1`, `InpSymbol2`, and `InpSymbol3` to match your broker's exact Market Watch symbols.
