@@ -55,3 +55,15 @@ Trend direction is determined using a dual-confirmation structural model:
 
 - **Moving Average Alignment (Optional):** When `InpUseMA = true`, price must additionally confirm trend direction against the 50 Exponential Moving Average (EMA) and 200 Simple Moving Average (SMA).
 - **Responsive Intraday Adaptation:** If 4H structure is in consolidation, the EA automatically evaluates 1H structural impulses to capture intraday trends without lag.
+
+## 📐 Fibonacci Retracement & Golden Zones
+
+Once the macro trend is confirmed, the EA tracks the active impulse swing on the structure timeframe:
+
+| Fibonacci Level | Ratio | Role & Strategic Significance |
+| :--- | :--- | :--- |
+| **Swing High / Low** | `0.0% / 100.0%` | Origin of the impulse leg and primary Take Profit target. |
+| **Entry Threshold** | `38.2%` | Minimum required retracement for shallow, high-momentum trends. |
+| **Equilibrium Level** | `50.0%` | Fair value midpoint where institutional liquidity accumulates. |
+| **Deep Discount / OTE** | `61.8%` | Optimal Trade Entry (OTE) offering the highest Risk:Reward ratios. |
+| **Invalidation Barrier** | `78.6%` | Structural invalidation threshold; breaches trigger trend reversal checks. |
