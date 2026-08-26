@@ -161,3 +161,11 @@ The EA includes a high-performance visual display powered by a dedicated 1-secon
 - 🟩 **Shaded Entry Box:** Highlights the optimal pullback zone on the chart.
 - 📦 **Session Boxes:** Visual background framing of historical and active London and Asian sessions.
 - 🎯 **Trade Entry Markers:** Real Buy/Sell execution arrows with dashed SL and TP projection lines.
+
+## 🚀 Installation & Quick Start
+
+1. **Copy File:** Copy `FibonacciICT_EA.mq5` into your MetaTrader 5 `MQL5/Experts/` directory.
+2. **Compile:** Open MetaEditor (<kbd>F4</kbd>), open `FibonacciICT_EA.mq5`, and press <kbd>F7</kbd> (Compile). Verify `0 errors, 0 warnings`.
+3. **Enable Algo Trading:** Click the **Algo Trading** button on the top MT5 toolbar (must be green).
+4. **Attach EA:** Open a **15-minute (M15)** chart of EURUSD, Gold (XAUUSD), or AUDJPY. Drag the EA onto the chart.
+5. **Permissions:** In the *Common* tab, check **Allow Algo Trading** and click **OK**.
