@@ -82,3 +82,7 @@ The EA requires at least one primary institutional ICT trigger before entry:
 ### 1. Break of Structure (BOS)
 - **Bullish BOS:** 15M candle closes with momentum above the high of the pullback candle, confirming buyers have re-entered the market.
 - **Bearish BOS:** 15M candle closes with momentum below the low of the pullback candle, confirming seller dominance.
+
+### 2. Change of Character (CHoCH)
+- Identifies early trend reversal shifts by detecting when price breaks the most recent structural lower high in a downtrend, or structural higher low in an uptrend.
+- Serves as a primary transition filter for new trend waves.
