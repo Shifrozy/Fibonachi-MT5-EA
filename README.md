@@ -179,3 +179,14 @@ Brokers use different naming conventions for symbols. Update the inputs to match
 - Pro / ECN ('.' suffix): `EURUSD.pro`, `XAUUSD.pro`, `GOLD`
 
 Open the EA **Inputs** tab and update `InpSymbol1`, `InpSymbol2`, and `InpSymbol3` to match your broker's exact Market Watch symbols.
+
+## 🧪 Strategy Tester & Backtesting Guidelines
+
+To backtest the EA in MetaTrader 5 Strategy Tester (<kbd>Ctrl+R</kbd>):
+
+1. **Symbol:** Select `EURUSDm` or `XAUUSDm`.
+2. **Period:** Select `M15`.
+3. **Date Range:** Select `Last 6 Months` or `Last 1 Year`.
+4. **Execution Modeling:** Select `Every tick based on real ticks` (recommended) or `1 minute OHLC`.
+5. **Deposit:** Set to your planned initial balance (e.g. `$10,000`).
+6. Click **Start** to run the simulation and analyze profit factor, Sharpe ratio, and drawdown metrics.
