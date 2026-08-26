@@ -90,3 +90,8 @@ The EA requires at least one primary institutional ICT trigger before entry:
 ### 3. Fair Value Gap (FVG) Retests
 - Detects 3-candle price imbalances where a gap exists between Candle 1's wick and Candle 3's wick.
 - Price returning to fill the Fair Value Gap within the 38.2%–61.8% Fibonacci zone triggers high-probability institutional order block entries.
+
+### 4. Candlestick Confirmation Engine
+The EA validates rejection candles on the entry timeframe (15M / 5M):
+- **Bullish Setups:** Pin Bar / Hammer (lower wick >= 100% of body), Bullish Engulfing, or Strong Bullish Close (> 50% range).
+- **Bearish Setups:** Shooting Star (upper wick >= 100% of body), Bearish Engulfing, or Strong Bearish Close (> 50% range).
