@@ -113,3 +113,7 @@ $$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Sto
 
 - Prevents overleveraging on large Stop Losses.
 - Automatically adjusts lot size for currency pairs, Gold (XAUUSD), and account currency denominations.
+
+### 🔒 1:1 Breakeven Stop-Lock
+- When unrealized profit reaches **1:1 Risk:Reward**, the Stop Loss is automatically shifted to **Entry Price + 10 points profit**.
+- Completely eliminates downside capital risk while allowing the trade to reach maximum target extensions.
