@@ -74,3 +74,11 @@ If price violates the 78.6% Fibonacci level during a pullback:
 1. The active pullback setup is immediately cancelled.
 2. The EA triggers `HandleTrendChange()`, monitoring for a **Change of Character (CHoCH)** or **Opposing BOS**.
 3. If confirmed with Fair Value Gap formation, the EA transitions to the new counter-trend direction with reduced initial transition risk.
+
+## 🔍 ICT Confirmation Matrix
+
+The EA requires at least one primary institutional ICT trigger before entry:
+
+### 1. Break of Structure (BOS)
+- **Bullish BOS:** 15M candle closes with momentum above the high of the pullback candle, confirming buyers have re-entered the market.
+- **Bearish BOS:** 15M candle closes with momentum below the low of the pullback candle, confirming seller dominance.
