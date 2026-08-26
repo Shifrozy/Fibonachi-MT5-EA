@@ -67,3 +67,10 @@ Once the macro trend is confirmed, the EA tracks the active impulse swing on the
 | **Equilibrium Level** | `50.0%` | Fair value midpoint where institutional liquidity accumulates. |
 | **Deep Discount / OTE** | `61.8%` | Optimal Trade Entry (OTE) offering the highest Risk:Reward ratios. |
 | **Invalidation Barrier** | `78.6%` | Structural invalidation threshold; breaches trigger trend reversal checks. |
+
+### ❌ 78.6% Invalidation & Trend Shift Protocol
+
+If price violates the 78.6% Fibonacci level during a pullback:
+1. The active pullback setup is immediately cancelled.
+2. The EA triggers `HandleTrendChange()`, monitoring for a **Change of Character (CHoCH)** or **Opposing BOS**.
+3. If confirmed with Fair Value Gap formation, the EA transitions to the new counter-trend direction with reduced initial transition risk.
