@@ -25,3 +25,12 @@
 - [Disclaimer](#-disclaimer)
 
 ---
+
+## 🎯 Executive Strategy Summary
+
+The **Fibonacci ICT Expert Advisor** is a high-performance algorithmic trading robot engineered in MQL5 for MetaTrader 5. Built for institutional precision, it eliminates emotional trading by fusing two of the most powerful price action methodologies in modern technical analysis:
+
+1. **Fibonacci Retracement Discount & Premium Pricing:** Identifying high-probability equilibrium and deep pullback levels (38.2%, 50.0%, 61.8%).
+2. **Inner Circle Trader (ICT) Market Structure Concepts:** Confirming high-volume liquidity sweeps, Fair Value Gaps (FVG), Break of Structure (BOS), and Change of Character (CHoCH).
+
+Designed specifically for **intraday trend continuation**, the system operates with multi-timeframe precision across major currency pairs and commodities including **EURUSD**, **XAUUSD (Gold)**, and **AUDJPY**.
