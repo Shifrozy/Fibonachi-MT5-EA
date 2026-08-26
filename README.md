@@ -215,3 +215,19 @@ The EA automatically detects your broker's order filling mode (FOK/IOC/Return) a
 <summary><strong>Q: Does the EA support prop firm challenges (FTMO, FundedNext, etc.)?</strong></summary>
 Yes. With strict percentage-based position sizing, hard stop losses on every trade, 1:1 breakeven protection, and no martingale or grid averaging, the EA complies with institutional prop firm risk parameters.
 </details>
+
+---
+
+## 📄 License & Disclaimer
+
+### License
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+### ⚠️ Financial Risk Disclaimer
+*Trading foreign exchange, precious metals, and financial derivatives on margin carries a high level of risk and may not be suitable for all investors. High leverage can work against you as well as for you. Before deciding to trade, you should carefully consider your investment objectives, level of experience, and risk appetite. Past performance is not indicative of future results.*
+
+---
+<p align="center">
+  <strong>Developed for Institutional MQL5 Algorithmic Trading</strong><br>
+  Fibonacci Retracement + ICT Price Action Engine &copy; 2026
+</p>
