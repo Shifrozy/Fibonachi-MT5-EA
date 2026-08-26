@@ -43,3 +43,15 @@ Designed specifically for **intraday trend continuation**, the system operates w
 - 🛡️ **Institutional Capital Protection:** Pre-calculated risk-per-trade percentage, automatic 1:1 Breakeven stop-lock, and 50% partial profit banking at TP1.
 - 📈 **ATR Dynamic Trailing Stop:** Ride trend expansions with adaptive volatility-based trailing stops.
 - 📊 **Real-Time On-Chart HUD Panel:** Dedicated 1-second timer rendering live GMT time, active session, trend bias, fib status, equity, and open positions.
+
+## 🧭 Multi-Timeframe Trend Bias Engine
+
+Trend direction is determined using a dual-confirmation structural model:
+
+```
+[1H / 4H Market Structure]  -->  Higher Highs (HH) & Higher Lows (HL)  -->  BULLISH BIAS
+[1H / 4H Market Structure]  -->  Lower Highs (LH) & Lower Lows (LL)    -->  BEARISH BIAS
+```
+
+- **Moving Average Alignment (Optional):** When `InpUseMA = true`, price must additionally confirm trend direction against the 50 Exponential Moving Average (EMA) and 200 Simple Moving Average (SMA).
+- **Responsive Intraday Adaptation:** If 4H structure is in consolidation, the EA automatically evaluates 1H structural impulses to capture intraday trends without lag.
