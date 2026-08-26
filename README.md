@@ -95,3 +95,11 @@ The EA requires at least one primary institutional ICT trigger before entry:
 The EA validates rejection candles on the entry timeframe (15M / 5M):
 - **Bullish Setups:** Pin Bar / Hammer (lower wick >= 100% of body), Bullish Engulfing, or Strong Bullish Close (> 50% range).
 - **Bearish Setups:** Shooting Star (upper wick >= 100% of body), Bearish Engulfing, or Strong Bearish Close (> 50% range).
+
+## ⏰ Trading Sessions & Timing Windows
+
+Institutional volume is heavily concentrated in specific trading sessions. The EA includes a built-in GMT session filter:
+
+- **London / European & NY Overlap Session:** `07:00 – 17:00 GMT` *(Ideal for EURUSD and XAUUSD)*
+- **Asian / Tokyo Session:** `23:00 – 09:00 GMT` *(Ideal for AUDJPY)*
+- **Session Filter Toggle:** Set `InpUseSessionFilter = false` to enable 24/5 price-action operation.
