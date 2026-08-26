@@ -103,3 +103,13 @@ Institutional volume is heavily concentrated in specific trading sessions. The E
 - **London / European & NY Overlap Session:** `07:00 – 17:00 GMT` *(Ideal for EURUSD and XAUUSD)*
 - **Asian / Tokyo Session:** `23:00 – 09:00 GMT` *(Ideal for AUDJPY)*
 - **Session Filter Toggle:** Set `InpUseSessionFilter = false` to enable 24/5 price-action operation.
+
+## 🛡️ Risk Management & Capital Preservation
+
+The EA is built with an institutional risk management core:
+
+### Dynamic Position Sizing Formula
+$$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Stop Loss Distance (points)} \times \text{Point Value}}$$
+
+- Prevents overleveraging on large Stop Losses.
+- Automatically adjusts lot size for currency pairs, Gold (XAUUSD), and account currency denominations.
