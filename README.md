@@ -86,3 +86,7 @@ The EA requires at least one primary institutional ICT trigger before entry:
 ### 2. Change of Character (CHoCH)
 - Identifies early trend reversal shifts by detecting when price breaks the most recent structural lower high in a downtrend, or structural higher low in an uptrend.
 - Serves as a primary transition filter for new trend waves.
+
+### 3. Fair Value Gap (FVG) Retests
+- Detects 3-candle price imbalances where a gap exists between Candle 1's wick and Candle 3's wick.
+- Price returning to fill the Fair Value Gap within the 38.2%–61.8% Fibonacci zone triggers high-probability institutional order block entries.
