@@ -129,3 +129,25 @@ $$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Sto
 ### 🚫 Anti-Overtrading Session Limits
 - Maximum allowed trades per session per symbol is capped (default: `2 trades`).
 - Prevents overtrading during choppy market consolidation or unexpected macroeconomic news events.
+
+## ⚙️ Input Parameter Reference
+
+| Category | Parameter | Default | Description |
+| :--- | :--- | :--- | :--- |
+| **General** | `InpMagicNumber` | `112233` | Unique identifier for EA orders. |
+| | `InpRiskPercent` | `2.0` | Risk percentage per trade based on account equity. |
+| | `InpMaxTradesPerSession` | `2` | Max trades per symbol per active session. |
+| | `InpSlippage` | `30` | Maximum slippage allowed in points. |
+| **Symbols** | `InpSymbol1` | `EURUSDm` | Primary London session pair. |
+| | `InpSymbol2` | `XAUUSDm` | Secondary London session pair (Gold). |
+| | `InpSymbol3` | `AUDJPYm` | Asian session pair. |
+| **Sessions** | `InpUseSessionFilter` | `true` | Enable/disable session hour limits. |
+| | `InpLondonStartHour / End` | `7 / 17` | London + NY volume trading window (GMT). |
+| | `InpAsianStartHour / End` | `23 / 9` | Asian session trading window (GMT). |
+| **Timeframes** | `InpHTF_Period` | `PERIOD_H1` | Trend bias timeframe (H1 for active intraday). |
+| | `InpStructureTF` | `PERIOD_M15` | Fibonacci market structure timeframe. |
+| | `InpEntryTF` | `PERIOD_M15` | Execution and ICT trigger timeframe. |
+| **Trade Mgmt** | `InpMinRR` | `1.5` | Minimum Risk:Reward ratio to accept setup. |
+| | `InpBreakevenRR` | `1.0` | RR distance to move SL to Breakeven. |
+| | `InpPartialClosePercent`| `50.0` | Percentage of lots closed at TP1. |
+| | `InpUseTrailingStop` | `true` | Activate ATR-based trailing stop. |
