@@ -151,3 +151,13 @@ $$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Sto
 | | `InpBreakevenRR` | `1.0` | RR distance to move SL to Breakeven. |
 | | `InpPartialClosePercent`| `50.0` | Percentage of lots closed at TP1. |
 | | `InpUseTrailingStop` | `true` | Activate ATR-based trailing stop. |
+
+## 🖥️ On-Chart HUD Dashboard & Visual Guide
+
+The EA includes a high-performance visual display powered by a dedicated 1-second timer:
+
+- 📊 **Live Dashboard Panel:** Real-time display of GMT Clock, Session status, 1H/4H Trend Bias, Live Bid/Ask & Spread, Fibonacci Level Prices, Active Zone state, Session Trade Count, Open Positions, and Account Equity.
+- 📏 **Fibonacci Trend Lines:** Color-coded levels with right-aligned price tags (38.2% DodgerBlue, 50% Gold, 61.8% Orange, 78.6% Red).
+- 🟩 **Shaded Entry Box:** Highlights the optimal pullback zone on the chart.
+- 📦 **Session Boxes:** Visual background framing of historical and active London and Asian sessions.
+- 🎯 **Trade Entry Markers:** Real Buy/Sell execution arrows with dashed SL and TP projection lines.
