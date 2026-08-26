@@ -125,3 +125,7 @@ $$\text{Lot Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Sto
 ### 📈 Volatility-Based ATR Trailing Stop
 - Following Breakeven and TP1, the remaining 50% position volume is protected by an adaptive **ATR(14) Trailing Stop** (multiplier `1.5x`).
 - Lets profitable trends run freely toward higher timeframe structural resistance/support levels.
+
+### 🚫 Anti-Overtrading Session Limits
+- Maximum allowed trades per session per symbol is capped (default: `2 trades`).
+- Prevents overtrading during choppy market consolidation or unexpected macroeconomic news events.
