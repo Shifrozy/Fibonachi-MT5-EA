@@ -42,7 +42,7 @@ enum ENUM_ICT_SIGNAL
 input group "=== General Settings ==="
 input int         InpMagicNumber        = 112233;       // Magic Number
 input double      InpRiskPercent        = 2.0;          // Risk Percent per Trade
-input int         InpMaxTradesPerSession= 2;            // Max Trades per Session per Symbol
+input int         InpMaxTradesPerSession= 10;           // Max Trades per Day per Symbol
 input int         InpSlippage           = 30;           // Slippage (points)
 
 input group "=== Symbol Settings ==="
@@ -50,18 +50,18 @@ input string      InpSymbol1            = "EURUSDm";    // Symbol 1 (London)
 input string      InpSymbol2            = "XAUUSDm";    // Symbol 2 (London)
 input string      InpSymbol3            = "AUDJPYm";    // Symbol 3 (Asian)
 
-input group "=== Session Settings (GMT Hours) ==="
-input bool        InpUseSessionFilter   = true;         // Enable Session Filter
-input int         InpLondonStartHour    = 7;            // London Session Start (GMT)
-input int         InpLondonEndHour      = 17;           // London Session End (GMT - covers London + NY overlap)
-input int         InpAsianStartHour     = 23;           // Asian Session Start (GMT)
-input int         InpAsianEndHour       = 9;            // Asian Session End (GMT)
+input group "=== Session Settings (GMT/Server Hours) ==="
+input bool        InpUseSessionFilter   = false;        // Enable Session Filter (False = 24/5 Full Testing)
+input int         InpLondonStartHour    = 0;            // Session Start Hour (0 = All Day)
+input int         InpLondonEndHour      = 24;           // Session End Hour (24 = All Day)
+input int         InpAsianStartHour     = 23;           // Asian Session Start
+input int         InpAsianEndHour       = 9;            // Asian Session End
 
 input group "=== Fibonacci Settings ==="
-input double      InpFibEntryHigh       = 61.8;         // Fib Entry Zone Deep Pullback (%)
-input double      InpFibEntryLow        = 38.2;         // Fib Entry Zone Start (%)
+input double      InpFibEntryHigh       = 78.6;         // Fib Entry Zone Deep Pullback (%)
+input double      InpFibEntryLow        = 23.6;         // Fib Entry Zone Start (%)
 input double      InpFibCautionLevel    = 61.8;         // Fib Caution Zone (%)
-input double      InpFibInvalidation    = 78.6;         // Fib Invalidation Level (%)
+input double      InpFibInvalidation    = 88.6;         // Fib Invalidation Level (%)
 
 input group "=== Trend Detection Settings ==="
 input ENUM_TIMEFRAMES InpHTF_Period     = PERIOD_H1;    // Higher Timeframe (Trend Bias - H1 for active intraday)
@@ -80,6 +80,21 @@ input double      InpPartialClosePercent= 50.0;         // Partial Close Percent
 input bool        InpUseTrailingStop    = true;         // Use Trailing Stop
 input int         InpTrailingATRPeriod  = 14;           // Trailing ATR Period
 input double      InpTrailingATRMult    = 1.5;          // Trailing ATR Multiplier
+
+input group "=== ADX Micro-Bias Filter ==="
+input bool        InpUseADX             = true;         // Enable ADX Micro-Bias Filter
+input int         InpADX_Period         = 14;           // ADX Period
+input double      InpADX_Threshold      = 15.0;         // Minimum ADX Strength Threshold
+input bool        InpADX_CheckDirection = true;         // Check +DI / -DI Directional Match
+
+input group "=== Grid / Martingale & Drawdown Protection ==="
+input bool        InpEnableGridMartingale= true;        // Enable Grid/Martingale Recovery Mode
+input double      InpGridStepPips       = 25.0;         // Grid Step Distance (pips)
+input bool        InpUseATRGridStep     = true;         // Use Dynamic ATR Grid Step (1.5x ATR)
+input double      InpMartingaleMult     = 1.2;          // Martingale Lot Multiplier (1.0 = Regular Grid, 1.2+ = Martingale)
+input int         InpMaxGridOrders      = 4;            // Max Allowed Grid Orders per Symbol
+input double      InpBasketTP_Pips      = 15.0;         // Basket Take Profit (pips above avg price)
+input double      InpHardMaxDrawdown    = 20.0;         // Hard Max Drawdown Equity Protection (%) [0 = Disabled]
 
 input group "=== ICT Settings ==="
 input int         InpBOS_Lookback       = 8;            // BOS Lookback Bars
@@ -150,11 +165,17 @@ struct SymbolData
    int               ma_mid_handle;
    int               ma_slow_handle;
    int               atr_handle;
+   int               adx_handle;       // ADX filter handle
+   double            last_adx;
+   double            last_pdi;
+   double            last_mdi;
    ENUM_TREND_BIAS   htf_bias;
    FibLevels         fib;
    int               trades_this_session;
    datetime          last_trade_time;
 };
+
+double g_max_recorded_dd = 0.0; // Tracks peak floating drawdown %
 
 struct PositionState
 {
@@ -225,6 +246,9 @@ int            g_total_symbols = 3;
 datetime       g_last_bar_time[];
 bool           g_initialized = false;
 string         g_obj_prefix = "FibICT_";
+bool           g_is_tester = false;          // True when running in Strategy Tester
+bool           g_is_visual_mode = false;     // True when running in Visual Mode tester
+datetime       g_last_visual_update = 0;     // Throttle visual updates
 
 //+------------------------------------------------------------------+
 //| Detect the correct order filling mode for the broker              |
@@ -300,12 +324,22 @@ int OnInit()
          }
       }
       
-      // ATR handle for trailing
+      // ATR handle for trailing & dynamic grid
       g_symbols[i].atr_handle = iATR(sym, InpEntryTF, InpTrailingATRPeriod);
       if(g_symbols[i].atr_handle == INVALID_HANDLE)
       {
          PrintFormat("WARNING: Failed to create ATR handle for %s — skipping this symbol.", sym);
          continue;
+      }
+      
+      // ADX handle for micro-bias filter
+      if(InpUseADX)
+      {
+         g_symbols[i].adx_handle = iADX(sym, InpEntryTF, InpADX_Period);
+         if(g_symbols[i].adx_handle == INVALID_HANDLE)
+         {
+            PrintFormat("WARNING: Failed to create ADX handle for %s.", sym);
+         }
       }
       
       // If we reach here, symbol is fully ready
@@ -330,8 +364,13 @@ int OnInit()
    
    g_initialized = true;
    
-   // Set 1-second timer for instant and smooth visual updates even without ticks
-   EventSetTimer(1);
+   // Detect if we are in Strategy Tester
+   g_is_tester = (bool)MQLInfoInteger(MQL_TESTER);
+   g_is_visual_mode = (bool)MQLInfoInteger(MQL_VISUAL_MODE);
+   
+   // Set timer for visual updates (only needed in live or visual tester mode)
+   if(!g_is_tester || g_is_visual_mode)
+      EventSetTimer(2);  // Update visuals every 2 seconds (was 1 — reduces lag)
    
    // Render visuals immediately on startup
    UpdateChartVisuals();
@@ -356,6 +395,7 @@ void OnDeinit(const int reason)
       if(g_symbols[i].ma_mid_handle != INVALID_HANDLE)  IndicatorRelease(g_symbols[i].ma_mid_handle);
       if(g_symbols[i].ma_slow_handle != INVALID_HANDLE) IndicatorRelease(g_symbols[i].ma_slow_handle);
       if(g_symbols[i].atr_handle != INVALID_HANDLE)     IndicatorRelease(g_symbols[i].atr_handle);
+      if(g_symbols[i].adx_handle != INVALID_HANDLE)     IndicatorRelease(g_symbols[i].adx_handle);
    }
    
    // Clean up all visual objects from chart
@@ -371,8 +411,9 @@ void OnDeinit(const int reason)
 void OnTimer()
 {
    if(!g_initialized) return;
+   if(g_is_tester && !g_is_visual_mode) return; // No visuals needed in non-visual tester
    
-   // Update live dashboard, fibonacci levels, and chart visuals every second
+   // Update live dashboard, fibonacci levels, and chart visuals
    UpdateChartVisuals();
 }
 
@@ -383,8 +424,36 @@ void OnTick()
 {
    if(!g_initialized) return;
    
-   // Always refresh chart visuals on every incoming tick
-   UpdateChartVisuals();
+   // Check and enforce hard max drawdown protection across the account
+   if(CheckHardDrawdownProtection())
+   {
+      // Only update visuals on DD trigger if in live or visual mode
+      if(!g_is_tester || g_is_visual_mode)
+         UpdateChartVisuals();
+      return;
+   }
+   
+   // Throttled visual updates: only on new bars in tester, or every 2s in live
+   if(!g_is_tester)
+   {
+      datetime now = TimeCurrent();
+      if(now - g_last_visual_update >= 2)
+      {
+         g_last_visual_update = now;
+         UpdateChartVisuals();
+      }
+   }
+   else if(g_is_visual_mode)
+   {
+      // In visual tester: only update visuals on new M15 bars (not every tick!)
+      static datetime s_last_visual_bar = 0;
+      datetime cur_bar = iTime(Symbol(), InpEntryTF, 0);
+      if(cur_bar != s_last_visual_bar)
+      {
+         s_last_visual_bar = cur_bar;
+         UpdateChartVisuals();
+      }
+   }
    
    // Process each symbol for trade management and entries
    for(int i = 0; i < g_total_symbols; i++)
@@ -394,8 +463,14 @@ void OnTick()
       // Skip symbols that weren't found on this broker
       if(!g_symbols[i].enabled) continue;
       
+      // In Strategy Tester: only process the CHART symbol (other symbols cause stalling)
+      if(g_is_tester && sym != Symbol()) continue;
+      
       // ---- TRADE MANAGEMENT (every tick) ----
-      ManageOpenTrades(i);
+      if(InpEnableGridMartingale)
+         ManageGridBasket(i);
+      else
+         ManageOpenTrades(i);
       
       // ---- NEW BAR CHECK (entry logic only on new bar) ----
       datetime current_bar_time = iTime(sym, InpEntryTF, 0);
@@ -405,10 +480,13 @@ void OnTick()
       // ---- SESSION FILTER ----
       if(!IsInSession(g_symbols[i].session_type))
       {
-         // Reset trade count when session ends
          ResetSessionTradeCount(i);
          continue;
       }
+      
+      // ---- DAILY TRADE COUNTER RESET (when no session filter) ----
+      if(!InpUseSessionFilter)
+         ResetSessionTradeCount(i);
       
       // ---- MAX TRADES CHECK ----
       if(g_symbols[i].trades_this_session >= InpMaxTradesPerSession)
@@ -441,12 +519,15 @@ void OnTick()
          continue;
       }
       
-      // ---- STEP 5: ICT CONFIRMATIONS ON 15M ----
-      if(!HasICTConfirmation(i))
+      // ---- STEP 4B: ADX MICRO-BIAS MOMENTUM FILTER ----
+      double adx_val = 0, pdi_val = 0, mdi_val = 0;
+      if(!CheckADXFilter(i, g_symbols[i].htf_bias, adx_val, pdi_val, mdi_val))
          continue;
       
-      // ---- STEP 6: CANDLESTICK CONFIRMATION ----
-      if(!HasCandlestickConfirmation(i))
+      // ---- STEP 5: ICT OR CANDLESTICK CONFIRMATION (at least one must pass) ----
+      bool ict_ok = HasICTConfirmation(i);
+      bool candle_ok = HasCandlestickConfirmation(i);
+      if(!ict_ok && !candle_ok)
          continue;
       
       // ---- STEP 7: CALCULATE ENTRY, SL, TP ----
@@ -468,14 +549,15 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool IsInSession(int session_type)
 {
-   if(!InpUseSessionFilter) return true; // Session filter disabled
+   if(!InpUseSessionFilter) return true; // Session filter disabled - 24/5 trading
    
    MqlDateTime dt;
-   TimeGMT(dt);
+   TimeCurrent(dt);
    int hour = dt.hour;
    
-   if(session_type == 0) // London / European / NY Overlap
+   if(session_type == 0) // Primary Session (London / NY)
    {
+      if(InpLondonStartHour == 0 && InpLondonEndHour == 24) return true;
       if(InpLondonStartHour <= InpLondonEndHour)
          return (hour >= InpLondonStartHour && hour < InpLondonEndHour);
       else
@@ -493,15 +575,32 @@ bool IsInSession(int session_type)
 
 void ResetSessionTradeCount(int sym_index)
 {
-   // Reset when we detect session has ended
+   // When session filter is OFF, reset counter daily at midnight
+   if(!InpUseSessionFilter)
+   {
+      MqlDateTime dt;
+      TimeCurrent(dt);
+      // Reset at midnight (hour 0, first bar of the day)
+      if(dt.hour == 0 && g_symbols[sym_index].trades_this_session > 0)
+      {
+         static datetime last_reset_day = 0;
+         datetime today = TimeCurrent() - (dt.hour * 3600 + dt.min * 60 + dt.sec);
+         if(today != last_reset_day)
+         {
+            g_symbols[sym_index].trades_this_session = 0;
+            last_reset_day = today;
+         }
+      }
+      return;
+   }
+   
    MqlDateTime dt;
-   TimeGMT(dt);
+   TimeCurrent(dt);
    int hour = dt.hour;
    
    bool in_session = IsInSession(g_symbols[sym_index].session_type);
    if(!in_session && g_symbols[sym_index].trades_this_session > 0)
    {
-      // Check if enough time has passed since session end
       g_symbols[sym_index].trades_this_session = 0;
    }
 }
@@ -603,8 +702,13 @@ ENUM_TREND_BIAS AnalyzeMarketStructure(SwingPoint &swings[], int count)
    bool lower_high  = last_sh1 < last_sh2;
    bool lower_low   = last_sl1 < last_sl2;
    
+   // Strong trend: both conditions met
    if(higher_high && higher_low)  return TREND_BULLISH;
    if(lower_high && lower_low)    return TREND_BEARISH;
+   
+   // Moderate trend: at least one condition met (more flexible)
+   if(higher_high || higher_low)  return TREND_BULLISH;
+   if(lower_high || lower_low)    return TREND_BEARISH;
    
    return TREND_NEUTRAL;
 }
@@ -979,8 +1083,41 @@ bool DetectFVG(string sym, ENUM_TIMEFRAMES tf, ENUM_TREND_BIAS direction, double
 }
 
 //+------------------------------------------------------------------+
-//| ICT CONFIRMATION CHECK                                           |
+//| ADX MICRO-BIAS FILTER CHECK                                      |
 //+------------------------------------------------------------------+
+bool CheckADXFilter(int sym_index, ENUM_TREND_BIAS bias, double &adx_val, double &pdi_val, double &mdi_val)
+{
+   if(!InpUseADX) return true; // Filter disabled
+   
+   double adx_buf[], pdi_buf[], mdi_buf[];
+   ArraySetAsSeries(adx_buf, true);
+   ArraySetAsSeries(pdi_buf, true);
+   ArraySetAsSeries(mdi_buf, true);
+   
+   if(CopyBuffer(g_symbols[sym_index].adx_handle, 0, 0, 2, adx_buf) < 2) return true;
+   if(CopyBuffer(g_symbols[sym_index].adx_handle, 1, 0, 2, pdi_buf) < 2) return true;
+   if(CopyBuffer(g_symbols[sym_index].adx_handle, 2, 0, 2, mdi_buf) < 2) return true;
+   
+   adx_val = adx_buf[1];
+   pdi_val = pdi_buf[1];
+   mdi_val = mdi_buf[1];
+   
+   g_symbols[sym_index].last_adx = adx_val;
+   g_symbols[sym_index].last_pdi = pdi_val;
+   g_symbols[sym_index].last_mdi = mdi_val;
+   
+   // Check minimum trend strength threshold
+   if(adx_val < InpADX_Threshold) return false;
+   
+   // Check directional index match
+   if(InpADX_CheckDirection)
+   {
+      if(bias == TREND_BULLISH && pdi_val <= mdi_val) return false;
+      if(bias == TREND_BEARISH && mdi_val <= pdi_val) return false;
+   }
+   
+   return true;
+}
 bool HasICTConfirmation(int sym_index)
 {
    string sym = g_symbols[sym_index].symbol;
@@ -1359,8 +1496,164 @@ void ManageOpenTrades(int sym_index)
 }
 
 //+------------------------------------------------------------------+
-//| TREND CHANGE HANDLING (78.6% Break)                              |
+//| HARD DRAWDOWN PROTECTION STOP                                    |
 //+------------------------------------------------------------------+
+bool CheckHardDrawdownProtection()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(balance <= 0) return false;
+   
+   double floating_dd = 0.0;
+   if(equity < balance)
+      floating_dd = (balance - equity) / balance * 100.0;
+   
+   if(floating_dd > g_max_recorded_dd)
+      g_max_recorded_dd = floating_dd;
+   
+   if(InpHardMaxDrawdown > 0 && floating_dd >= InpHardMaxDrawdown)
+   {
+      PrintFormat("⚠️ HARD MAX DRAWDOWN REACHED: %.2f%% >= %.2f%% limit! Emergency closing all positions.",
+         floating_dd, InpHardMaxDrawdown);
+      
+      // Close all open positions across all symbols
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         if(posInfo.SelectByIndex(i))
+         {
+            if(posInfo.Magic() == InpMagicNumber)
+               trade.PositionClose(posInfo.Ticket());
+         }
+      }
+      return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| GRID / MARTINGALE BASKET RECOVERY MANAGEMENT                     |
+//+------------------------------------------------------------------+
+void ManageGridBasket(int sym_index)
+{
+   string sym = g_symbols[sym_index].symbol;
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double pip_size = (digits == 3 || digits == 5) ? point * 10 : point;
+   
+   int pos_count = 0;
+   double total_lots = 0;
+   double weighted_price_sum = 0;
+   double total_profit = 0;
+   double last_open_price = 0;
+   ENUM_POSITION_TYPE basket_type = POSITION_TYPE_BUY;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(!posInfo.SelectByIndex(i)) continue;
+      if(posInfo.Symbol() != sym) continue;
+      if(posInfo.Magic() != InpMagicNumber) continue;
+      
+      pos_count++;
+      double vol = posInfo.Volume();
+      double p_open = posInfo.PriceOpen();
+      total_lots += vol;
+      weighted_price_sum += p_open * vol;
+      total_profit += posInfo.Profit() + posInfo.Swap();
+      basket_type = posInfo.PositionType();
+      
+      if(pos_count == 1)
+         last_open_price = p_open;
+      else if(basket_type == POSITION_TYPE_BUY && p_open < last_open_price)
+         last_open_price = p_open;
+      else if(basket_type == POSITION_TYPE_SELL && p_open > last_open_price)
+         last_open_price = p_open;
+   }
+   
+   if(pos_count == 0) return;
+   
+   double avg_price = weighted_price_sum / total_lots;
+   double current_price = (basket_type == POSITION_TYPE_BUY) ? 
+      SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
+   
+   // 1. BASKET TAKE PROFIT CHECK
+   double target_price = (basket_type == POSITION_TYPE_BUY) ? 
+      avg_price + InpBasketTP_Pips * pip_size : 
+      avg_price - InpBasketTP_Pips * pip_size;
+   
+   bool hit_basket_tp = false;
+   if(basket_type == POSITION_TYPE_BUY && current_price >= target_price)
+      hit_basket_tp = true;
+   else if(basket_type == POSITION_TYPE_SELL && current_price <= target_price)
+      hit_basket_tp = true;
+   
+   if(hit_basket_tp || total_profit > (total_lots * 10))
+   {
+      PrintFormat("🎯 BASKET TP HIT: %s | %d orders | Profit: $%.2f | Closing basket...", 
+         sym, pos_count, total_profit);
+      
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         if(!posInfo.SelectByIndex(i)) continue;
+         if(posInfo.Symbol() != sym) continue;
+         if(posInfo.Magic() != InpMagicNumber) continue;
+         trade.PositionClose(posInfo.Ticket());
+      }
+      return;
+   }
+   
+   // 2. GRID AVERAGING ADD-ON ORDER CHECK
+   if(pos_count < InpMaxGridOrders)
+   {
+      double step_distance = InpGridStepPips * pip_size;
+      
+      // Dynamic ATR step if enabled
+      if(InpUseATRGridStep)
+      {
+         double atr[];
+         ArraySetAsSeries(atr, true);
+         if(CopyBuffer(g_symbols[sym_index].atr_handle, 0, 0, 2, atr) >= 2)
+         {
+            double atr_step = atr[1] * 1.5;
+            if(atr_step > step_distance)
+               step_distance = atr_step;
+         }
+      }
+      
+      bool trigger_grid_order = false;
+      if(basket_type == POSITION_TYPE_BUY && (last_open_price - current_price) >= step_distance)
+         trigger_grid_order = true;
+      else if(basket_type == POSITION_TYPE_SELL && (current_price - last_open_price) >= step_distance)
+         trigger_grid_order = true;
+      
+      if(trigger_grid_order)
+      {
+         // Calculate next lot with martingale multiplier
+         double next_lot = NormalizeDouble(posInfo.Volume() * MathPow(InpMartingaleMult, pos_count), 2);
+         double min_lot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+         double max_lot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+         double lot_step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+         
+         next_lot = MathMax(min_lot, next_lot);
+         next_lot = MathMin(max_lot, next_lot);
+         next_lot = NormalizeDouble(MathFloor(next_lot / lot_step) * lot_step, 2);
+         
+         string grid_comment = StringFormat("FibICT Grid #%d", pos_count + 1);
+         
+         if(basket_type == POSITION_TYPE_BUY)
+         {
+            double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+            trade.Buy(next_lot, sym, ask, 0, 0, grid_comment);
+            PrintFormat("GRID BUY ORDER #%d: %s | Lots: %.2f | Price: %.*f", pos_count + 1, sym, next_lot, digits, ask);
+         }
+         else
+         {
+            double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+            trade.Sell(next_lot, sym, bid, 0, 0, grid_comment);
+            PrintFormat("GRID SELL ORDER #%d: %s | Lots: %.2f | Price: %.*f", pos_count + 1, sym, next_lot, digits, bid);
+         }
+      }
+   }
+}
 void HandleTrendChange(int sym_index, double current_price)
 {
    string sym = g_symbols[sym_index].symbol;
@@ -1458,6 +1751,21 @@ void UpdateChartVisuals()
    // Ensure trend bias & fib are calculated
    g_symbols[sym_idx].htf_bias = GetHTFTrendBias(sym_idx);
    g_symbols[sym_idx].fib = CalculateFibonacciLevels(sym_idx);
+   
+   // Read ADX indicator values continuously for dashboard
+   if(InpUseADX && g_symbols[sym_idx].adx_handle != INVALID_HANDLE)
+   {
+      double adx_buf[], pdi_buf[], mdi_buf[];
+      ArraySetAsSeries(adx_buf, true);
+      ArraySetAsSeries(pdi_buf, true);
+      ArraySetAsSeries(mdi_buf, true);
+      if(CopyBuffer(g_symbols[sym_idx].adx_handle, 0, 0, 2, adx_buf) >= 2)
+         g_symbols[sym_idx].last_adx = adx_buf[1];
+      if(CopyBuffer(g_symbols[sym_idx].adx_handle, 1, 0, 2, pdi_buf) >= 2)
+         g_symbols[sym_idx].last_pdi = pdi_buf[1];
+      if(CopyBuffer(g_symbols[sym_idx].adx_handle, 2, 0, 2, mdi_buf) >= 2)
+         g_symbols[sym_idx].last_mdi = mdi_buf[1];
+   }
    
    // 1. Draw Dashboard Panel
    if(InpShowDashboard)
@@ -1626,7 +1934,7 @@ void DrawDashboard(int sym_index)
    }
    
    // Count total panel lines
-   int total_lines = 14;
+   int total_lines = 17;
    if(fib.is_valid) total_lines += 5;
    int panel_height = total_lines * line_height + 20;
    
@@ -1655,7 +1963,20 @@ void DrawDashboard(int sym_index)
    
    // Trend
    CreateLabel(g_obj_prefix + "d_trend", x, y + row * line_height, 
-      StringFormat("HTF 4H:   %s", bias_str), bias_clr, InpDashFontSize);
+      StringFormat("HTF 1H:   %s", bias_str), bias_clr, InpDashFontSize);
+   row++;
+   
+   // ADX Filter
+   string adx_str = "OFF";
+   color adx_clr = clrGray;
+   if(InpUseADX)
+   {
+      double adx_v = g_symbols[sym_index].last_adx;
+      adx_str = StringFormat("%.1f %s", adx_v, (adx_v >= InpADX_Threshold) ? "[Active ✓]" : "[Weak]");
+      adx_clr = (adx_v >= InpADX_Threshold) ? InpBullColor : clrOrange;
+   }
+   CreateLabel(g_obj_prefix + "d_adx", x, y + row * line_height, 
+      StringFormat("ADX (14): %s", adx_str), adx_clr, InpDashFontSize);
    row++;
    
    // Session
@@ -1668,6 +1989,13 @@ void DrawDashboard(int sym_index)
       StringFormat("Zone:     %s", zone_str), zone_clr, InpDashFontSize);
    row++;
    
+   // Recovery Mode & Risk
+   string mode_str = InpEnableGridMartingale ? 
+      StringFormat("Grid/Martingale (x%.1f)", InpMartingaleMult) : "Single Trade (SL/BE/TP)";
+   CreateLabel(g_obj_prefix + "d_mode", x, y + row * line_height, 
+      StringFormat("Mode:     %s", mode_str), clrCyan, InpDashFontSize);
+   row++;
+   
    // Trades & Risk
    CreateLabel(g_obj_prefix + "d_trades", x, y + row * line_height, 
       StringFormat("Trades:   %d / %d (Risk: %.1f%%)", g_symbols[sym_index].trades_this_session, InpMaxTradesPerSession, InpRiskPercent), InpDashTextColor, InpDashFontSize);
@@ -1678,7 +2006,7 @@ void DrawDashboard(int sym_index)
    {
       CreateLabel(g_obj_prefix + "d_sep3", x, y + row * line_height, "──────────────────────────────", clrDimGray, InpDashFontSize - 1);
       row++;
-      CreateLabel(g_obj_prefix + "d_fib_title", x, y + row * line_height, "Fibonacci Pullback Levels (1H):", clrGold, InpDashFontSize);
+      CreateLabel(g_obj_prefix + "d_fib_title", x, y + row * line_height, "Fibonacci Pullback Levels (M15):", clrGold, InpDashFontSize);
       row++;
       CreateLabel(g_obj_prefix + "d_fib382", x, y + row * line_height, 
          StringFormat("  38.2%% (Entry): %.*f", digits, fib.level_382), InpFibColor382, InpDashFontSize);
@@ -1705,18 +2033,29 @@ void DrawDashboard(int sym_index)
       ObjectDelete(0, g_obj_prefix + "d_fib786");
    }
    
-   // Open positions
+   // Open positions & Drawdown stats
    CreateLabel(g_obj_prefix + "d_sep4", x, y + row * line_height, "──────────────────────────────", clrDimGray, InpDashFontSize - 1);
    row++;
+   
    int open_pos = CountOpenPositions(sym);
    color pos_clr = (open_pos > 0) ? InpBullColor : clrGray;
    CreateLabel(g_obj_prefix + "d_pos", x, y + row * line_height, 
-      StringFormat("Positions: %d open", open_pos), pos_clr, InpDashFontSize);
+      StringFormat("Positions: %d open (%s)", open_pos, InpEnableGridMartingale ? StringFormat("Max %d", InpMaxGridOrders) : "Single"), pos_clr, InpDashFontSize);
+   row++;
+   
+   // Live Drawdown & Peak Drawdown
+   double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+   double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
+   double live_dd = (bal > 0 && eq < bal) ? ((bal - eq) / bal * 100.0) : 0.0;
+   color dd_clr = (live_dd < 5.0) ? InpBullColor : ((live_dd < 15.0) ? clrOrange : InpBearColor);
+   
+   CreateLabel(g_obj_prefix + "d_dd", x, y + row * line_height, 
+      StringFormat("Drawdown:  %.2f%% (Peak: %.2f%%)", live_dd, g_max_recorded_dd), dd_clr, InpDashFontSize);
    row++;
    
    // Account info
    CreateLabel(g_obj_prefix + "d_bal", x, y + row * line_height, 
-      StringFormat("Balance:   $%.2f (Eq: $%.2f)", AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY)), InpDashTextColor, InpDashFontSize);
+      StringFormat("Balance:   $%.2f (Eq: $%.2f)", bal, eq), InpDashTextColor, InpDashFontSize);
 }
 
 //+------------------------------------------------------------------+
@@ -1810,14 +2149,8 @@ void DrawSwingPoints(int sym_index)
    // Only draw on the chart's symbol
    if(sym != Symbol()) return;
    
-   // Remove old swing markers
-   int obj_total = ObjectsTotal(0, 0);
-   for(int k = obj_total - 1; k >= 0; k--)
-   {
-      string obj_name = ObjectGetString(0, ObjectName(0, k), OBJPROP_NAME);
-      if(StringFind(obj_name, g_obj_prefix + "swing_") == 0)
-         ObjectDelete(0, obj_name);
-   }
+   // Remove old swing markers efficiently using prefix delete
+   ObjectsDeleteAll(0, g_obj_prefix + "swing_");
    
    SwingPoint swings[];
    int count = DetectSwingPoints(sym, InpStructureTF, InpSwingLookback, swings);
